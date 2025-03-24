@@ -5,6 +5,10 @@ loguru
 mkdocs
 pip
 python-dotenv
+pandas
+scikit-learn
+kagglehub
+googletrans
 tqdm
 typer
 -e .
