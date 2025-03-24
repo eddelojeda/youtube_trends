@@ -6,10 +6,6 @@
 
 # YouTube Trends Predictor
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
-
 A data-driven project analyzing YouTube trending videos and predicting virality using machine learning. Includes data visualization, trend insights, and predictive models.
 
 ## Prior Requirements
@@ -20,6 +16,9 @@ In order to execute this project, it is necessary to have the following programs
 * Makefile (optional)
 
 ## Project Organization
+<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
+    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
+</a>
 
 ```
 ├── LICENSE            <- Open-source license if one is chosen
