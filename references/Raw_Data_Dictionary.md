@@ -1,11 +1,15 @@
-# Diccionario de los datos
+# Raw Data Dictionary
+
+The purpose of this file is to provide a clear and detailed description of the columns in the raw dataset. Here you will find definitions and explanations of the identified fields to facilitate understanding and analysis of the data, ensuring that all users have a consistent and coordinated view of the information contained.
+
+This data dictionary was created using information provided at https://www.kaggle.com/datasets/canerkonuk/youtube-trending-videos-global/data
 
 | Name                              | Type      | Description                                                                   |
 | --------------------------------- | --------- | ----------------------------------------------------------------------------- | 
 |video_id                           | object    | Unique identifier for the video on YouTube|
 |video_published_at                 | object    | The date and time when the video was published|
 |video_trending_date                | object    | The date when the video was identified as trending|
-|video_trending_country             | object    | The country where the video is trending (ISO 3166-1 alpha-2 country code|
+|video_trending_country             | object    | The country where the video is trending (ISO 3166-1 alpha-2 country code)|
 |video_title                        | object    | The title of the video as displayed on YouTube|
 |video_description                  | object    | The description provided by the video creator|
 |video_default_thumbnail            | object    | URL of the default thumbnail for the video|
