@@ -9,7 +9,7 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog
 from ttkbootstrap.constants import *
-from youtube_trends.config import PROJ_ROOT, RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
+from youtube_trends.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
 # ---------------------------------------------------------------------------------------------------------------------------
 
