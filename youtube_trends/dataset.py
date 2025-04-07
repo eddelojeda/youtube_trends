@@ -2,6 +2,7 @@ import os
 import typer
 import shutil
 import subprocess
+import pandas as pd
 import tkinter as tk
 import ttkbootstrap as ttk
 from tqdm import tqdm
@@ -33,7 +34,6 @@ def main(
             logger.info(f"New folder: {RAW_DATA_DIR}")
         elif input_path.exists():
             input_path.unlink()
-            logger.info(f"Existing dataset.csv file deleted for new download: {input_path}")
         download_dataset()
 
     # -----------------------------------------
@@ -42,12 +42,9 @@ def main(
     if not os.path.exists(PROCESSED_DATA_DIR):
         os.makedirs(PROCESSED_DATA_DIR)
         logger.info(f"New folder: {PROCESSED_DATA_DIR}")
-
-    '''logger.info("Processing dataset...")
-    for i in tqdm(range(10), total=10):
-        if i == 5:
-            logger.info("Something happened for iteration 5.")
-    logger.success("Processing dataset complete.")'''
+    elif output_path.exists():
+        output_path.unlink()
+    process_dataset()
     
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -116,6 +113,14 @@ def add_kaggle_token():
     accept_button.pack()
 
     root.mainloop()
+
+# ---------------------------------------------------------------------------------------------------------------------------    
+
+def process_dataset():
+    """ Process raw dataset. """
+    df = pd.read_csv(RAW_DATA_DIR / "dataset.csv")
+    print(df.head())
+
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
