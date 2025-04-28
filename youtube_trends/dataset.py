@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog
 from ttkbootstrap.constants import *
-from youtube_trends.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
+from youtube_trends.config import RAW_DATA_DIR, INTERIM_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -22,6 +22,7 @@ def main(
     # Default paths and parameters
     # -----------------------------------------
     input_path: Path = RAW_DATA_DIR / "dataset.csv",
+    inter_path: Path = INTERIM_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset"),
 ):
@@ -37,6 +38,16 @@ def main(
         download_dataset()
 
     # -----------------------------------------
+    # Creation of interim dataset
+    # -----------------------------------------    
+    if not os.path.exists(INTERIM_DATA_DIR):
+        os.makedirs(INTERIM_DATA_DIR)
+        logger.info(f"New folder: {INTERIM_DATA_DIR}")
+    elif inter_path.exists():
+        inter_path.unlink()
+    first_process_dataset()
+
+    # -----------------------------------------
     # Creation of processed dataset
     # -----------------------------------------    
     if not os.path.exists(PROCESSED_DATA_DIR):
@@ -44,7 +55,7 @@ def main(
         logger.info(f"New folder: {PROCESSED_DATA_DIR}")
     elif output_path.exists():
         output_path.unlink()
-    process_dataset()
+    final_process_dataset()
     
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -116,9 +127,16 @@ def add_kaggle_token():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def process_dataset():
-    """ Process raw dataset. """
+def first_process__dataset():
+    """ Initial process of raw dataset. """
     df = pd.read_csv(RAW_DATA_DIR / "dataset.csv")
+    print(df.head())
+
+# ---------------------------------------------------------------------------------------------------------------------------    
+
+def final_process__dataset():
+    """ Final process of raw dataset. """
+    df = pd.read_csv(INTERIM_DATA_DIR / "dataset.csv")
     print(df.head())
 
 
