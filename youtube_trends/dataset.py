@@ -2,6 +2,7 @@ import os
 import typer
 import shutil
 import subprocess
+import pandas as pd
 import tkinter as tk
 import ttkbootstrap as ttk
 from tqdm import tqdm
@@ -9,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog
 from ttkbootstrap.constants import *
-from youtube_trends.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
+from youtube_trends.config import RAW_DATA_DIR, INTERIM_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -21,6 +22,7 @@ def main(
     # Default paths and parameters
     # -----------------------------------------
     input_path: Path = RAW_DATA_DIR / "dataset.csv",
+    inter_path: Path = INTERIM_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset"),
 ):
@@ -33,8 +35,17 @@ def main(
             logger.info(f"New folder: {RAW_DATA_DIR}")
         elif input_path.exists():
             input_path.unlink()
-            logger.info(f"Existing dataset.csv file deleted for new download: {input_path}")
         download_dataset()
+
+    # -----------------------------------------
+    # Creation of interim dataset
+    # -----------------------------------------    
+    if not os.path.exists(INTERIM_DATA_DIR):
+        os.makedirs(INTERIM_DATA_DIR)
+        logger.info(f"New folder: {INTERIM_DATA_DIR}")
+    elif inter_path.exists():
+        inter_path.unlink()
+    first_process_dataset()
 
     # -----------------------------------------
     # Creation of processed dataset
@@ -42,12 +53,9 @@ def main(
     if not os.path.exists(PROCESSED_DATA_DIR):
         os.makedirs(PROCESSED_DATA_DIR)
         logger.info(f"New folder: {PROCESSED_DATA_DIR}")
-
-    '''logger.info("Processing dataset...")
-    for i in tqdm(range(10), total=10):
-        if i == 5:
-            logger.info("Something happened for iteration 5.")
-    logger.success("Processing dataset complete.")'''
+    elif output_path.exists():
+        output_path.unlink()
+    final_process_dataset()
     
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -116,6 +124,21 @@ def add_kaggle_token():
     accept_button.pack()
 
     root.mainloop()
+
+# ---------------------------------------------------------------------------------------------------------------------------    
+
+def first_process__dataset():
+    """ Initial process of raw dataset. """
+    df = pd.read_csv(RAW_DATA_DIR / "dataset.csv")
+    print(df.head())
+
+# ---------------------------------------------------------------------------------------------------------------------------    
+
+def final_process__dataset():
+    """ Final process of raw dataset. """
+    df = pd.read_csv(INTERIM_DATA_DIR / "dataset.csv")
+    print(df.head())
+
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
