@@ -39,8 +39,8 @@ def main(
     inter_path: Path = INTERIM_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
-    size: str = typer.Option("n", "--size", "-s", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
-    weeks: int = typer.Option(0, "--weeks", "-w", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
+    size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
+    weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
 ):
     if size not in {"n", "s", "m", "l", "x"}:
         raise typer.BadParameter("Model must be one of: n, s, m, l, x")
