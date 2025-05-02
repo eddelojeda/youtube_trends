@@ -278,18 +278,24 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df):
+def clean_title(title):
+    title = emoji.replace_emoji(title, replace='')
+    title = re.sub(r'[^\w\s]', '', title)
+    return title
+
+# ---------------------------------------------
+
+def process_titles_parallel(df, max_workers=8):
     titles = df['video_title'].fillna('').astype(str).tolist()
-    languages = []
-    translations = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(detect_and_translate, title) for title in titles]
-        for future in tqdm(futures, desc="Processing video title"):
-            lang, translated = future.result()
-            languages.append(lang)
-            translations.append(translated)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(tqdm(executor.map(detect_and_translate, clean_titles), total=len(clean_titles), desc="Processing video title"))
 
+    languages, translations = zip(*results)
+    
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
     return df
