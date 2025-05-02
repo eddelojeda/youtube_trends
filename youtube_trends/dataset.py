@@ -160,6 +160,11 @@ def first_process_dataset(size, weeks):
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
     df['days_until_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
 
+    cols_to_drop =['video_id', 'video_trending__date', 'video_trending_country', 'video_description', 'video_tags', 'video_dimension', 'video_definition', 
+                   'video_licensed_content', 'channel_id', 'channel_title', 'channel_description', 'channel_published_at', 'channel_country', 
+                   'channel_have_hidden_subscribers', 'channel_video_count', 'channel_localized_title', 'channel_localized_description']
+    df = df.drop(cols_to_drop, axis=1)
+
     df = df.sort_values(by='video_published_at', ascending=False)
     if weeks != 0:
         start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
@@ -170,12 +175,7 @@ def first_process_dataset(size, weeks):
     df = thumbnail_parallel_processing(df, size)
     df = thumbnails_stats_parallel(df) 
     df = process_titles_parallel(df)
-
-    cols_to_drop = ['video_id', 'video_trending__date', 'video_trending_country', 'video_description', 'video_tags', 'video_dimension', 'video_default_thumbnail', 
-                    'video_definition', 'video_licensed_content', 'channel_id', 'channel_title', 'channel_description', 'channel_published_at', 'channel_country', 
-                    'channel_have_hidden_subscribers', 'channel_video_count', 'channel_localized_title', 'channel_localized_description', 'video_title']
-    df = df.drop(cols_to_drop, axis=1)
-
+    df = df.drop(['video_default_thumbnail', 'video_title'], axis=1)
     df.to_csv(INTERIM_DATA_DIR / 'dataset.csv', index=False)
 
 # ---------------------------------------------
