@@ -122,20 +122,6 @@ def setup_kaggle_credentials():
 
 def add_kaggle_token():
     """Add Kaggle token to repository."""
-
-    def open_file_dialog():
-        file_path = filedialog.askopenfilename(
-            title="Select kaggle.json file",
-            filetypes=[("JSON files", "*.json")]
-        )
-        if file_path:
-            os.makedirs(KAGGLE_CREDENTIALS_DIR, exist_ok=True)
-            shutil.move(file_path, KAGGLE_CREDENTIALS_DIR / "kaggle.json")
-            logger.info(f"kaggle.json added to: {KAGGLE_CREDENTIALS_DIR}")
-        else:
-            logger.error("No file selected.")
-        root.quit()
-
     root = ttk.Window(themename="litera")
     root.title("Kaggle Token Setup")
     root.geometry("350x120")
@@ -147,6 +133,21 @@ def add_kaggle_token():
     accept_button.pack()
 
     root.mainloop()
+
+# ---------------------------------------------
+
+def open_file_dialog():
+    file_path = filedialog.askopenfilename(
+        title="Select kaggle.json file",
+        filetypes=[("JSON files", "*.json")]
+    )
+    if file_path:
+        os.makedirs(KAGGLE_CREDENTIALS_DIR, exist_ok=True)
+        shutil.move(file_path, KAGGLE_CREDENTIALS_DIR / "kaggle.json")
+        logger.info(f"kaggle.json added to: {KAGGLE_CREDENTIALS_DIR}")
+    else:
+        logger.error("No file selected.")
+    root.quit()
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
@@ -277,12 +278,12 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df, max_workers=8):
+def process_titles_parallel(df):
     titles = df['video_title'].fillna('').astype(str).tolist()
     languages = []
     translations = []
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor() as executor:
         futures = [executor.submit(detect_and_translate, title) for title in titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
