@@ -42,7 +42,7 @@ def main(
     size: str = typer.Option("n", "--size", "-s", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", "-w", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
 ):
-    if model not in {"n", "s", "m", "l", "x"}:
+    if size not in {"n", "s", "m", "l", "x"}:
         raise typer.BadParameter("Model must be one of: n, s, m, l, x")
 
     # -----------------------------------------
@@ -69,12 +69,14 @@ def main(
     # -----------------------------------------
     # Creation of processed dataset
     # -----------------------------------------    
+    '''
     if not os.path.exists(PROCESSED_DATA_DIR):
         os.makedirs(PROCESSED_DATA_DIR)
         logger.info(f"New folder: {PROCESSED_DATA_DIR}")
     elif output_path.exists():
         output_path.unlink()
     final_process_dataset()
+    '''
     
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -148,7 +150,7 @@ def add_kaggle_token():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def first_process__dataset(size, weeks):
+def first_process_dataset(size, weeks):
     """ Initial process of raw dataset. """
     logger.info("Processing raw dataset...")    
     
@@ -209,7 +211,7 @@ def  thumbnail_parallel_processing(df, size):
     class_names = ['thumbnail_' + name.replace(' ', '_') for name in model.names.values()]
     detections_array = np.zeros((len(thumbnail_urls), len(class_names)), dtype=int)
     
-    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails") as pbar:
+    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails class") as pbar:
         with ThreadPoolExecutor() as executor:
             futures = [
                 executor.submit(detect_thumbnail, thumbnail_url, idx, class_names, model, pbar)
@@ -247,7 +249,7 @@ def thumbnails_stats_parallel(df):
     thumbnail_urls = df['video_default_thumbnail'].values
     stats_array = np.zeros((len(thumbnail_urls), 3), dtype=float)
 
-    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails") as pbar:
+    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails stats") as pbar:
         with ThreadPoolExecutor() as executor:
             futures = [
                 executor.submit(thumbnail_stats, thumbnail_url, idx, pbar) 
@@ -282,7 +284,7 @@ def process_titles_parallel(df, max_workers=8):
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(detect_and_translate, title) for title in titles]
-        for future in tqdm(futures, desc="Detectando y traduciendo"):
+        for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
             languages.append(lang)
             translations.append(translated)
