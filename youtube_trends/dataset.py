@@ -15,15 +15,16 @@ from tqdm import tqdm
 from io import BytesIO
 from pathlib import Path
 from loguru import logger
-from langdetect import detect
 from tkinter import filedialog
 from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
 from deep_translator import GoogleTranslator
+from langdetect import detect, DetectorFactory
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor
 from youtube_trends.config import RAW_DATA_DIR, INTERIM_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
+DetectorFactory.seed = 0 
 warnings.filterwarnings('ignore')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -122,20 +123,6 @@ def setup_kaggle_credentials():
 
 def add_kaggle_token():
     """Add Kaggle token to repository."""
-
-    def open_file_dialog():
-        file_path = filedialog.askopenfilename(
-            title="Select kaggle.json file",
-            filetypes=[("JSON files", "*.json")]
-        )
-        if file_path:
-            os.makedirs(KAGGLE_CREDENTIALS_DIR, exist_ok=True)
-            shutil.move(file_path, KAGGLE_CREDENTIALS_DIR / "kaggle.json")
-            logger.info(f"kaggle.json added to: {KAGGLE_CREDENTIALS_DIR}")
-        else:
-            logger.error("No file selected.")
-        root.quit()
-
     root = ttk.Window(themename="litera")
     root.title("Kaggle Token Setup")
     root.geometry("350x120")
@@ -147,6 +134,21 @@ def add_kaggle_token():
     accept_button.pack()
 
     root.mainloop()
+
+# ---------------------------------------------
+
+def open_file_dialog():
+    file_path = filedialog.askopenfilename(
+        title="Select kaggle.json file",
+        filetypes=[("JSON files", "*.json")]
+    )
+    if file_path:
+        os.makedirs(KAGGLE_CREDENTIALS_DIR, exist_ok=True)
+        shutil.move(file_path, KAGGLE_CREDENTIALS_DIR / "kaggle.json")
+        logger.info(f"kaggle.json added to: {KAGGLE_CREDENTIALS_DIR}")
+    else:
+        logger.error("No file selected.")
+    root.quit()
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
@@ -168,6 +170,9 @@ def first_process_dataset(size, weeks):
     df = df.sort_values(by='video_published_at', ascending=False)
     if weeks != 0:
         start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
+        df = df[df['video_published_at'] >= start_date]
+    else:
+        start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
         df = df[df['video_published_at'] >= start_date]
     df = df.dropna()
     df.reset_index(drop=True, inplace=True)
@@ -277,18 +282,29 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df, max_workers=8):
+def clean_title(title):
+    title = emoji.replace_emoji(title, replace='')
+    title = re.sub(r'[^\w\s]', '', title)
+    return title
+
+# ---------------------------------------------
+
+def process_titles_parallel(df):
     titles = df['video_title'].fillna('').astype(str).tolist()
+    
+    with ThreadPoolExecutor() as executor:
+        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
+
     languages = []
     translations = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(detect_and_translate, title) for title in titles]
+    
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
             languages.append(lang)
             translations.append(translated)
-
+    
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
     return df

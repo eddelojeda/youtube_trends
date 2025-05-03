@@ -1,6 +1,6 @@
-# Interim Data Dictionary
+# Processed Data Dictionary
 
-The purpose of this file is to provide a clear and detailed description of the columns in the interim processed dataset. Here you will find definitions and explanations of the identified fields to facilitate understanding and analysis of the data, ensuring that all users have a consistent and coordinated view of the information contained.
+The purpose of this file is to provide a clear and detailed description of the columns in the processed dataset. Here you will find definitions and explanations of the identified fields to facilitate understanding and analysis of the data, ensuring that all users have a consistent and coordinated view of the information contained.
 
 | Name                       | Type    | Description                                            |
 | -------------------------- | ------- | ------------------------------------------------------ |
@@ -17,7 +17,7 @@ The purpose of this file is to provide a clear and detailed description of the c
 | video_title_language       | object  | Language of the video title as displayed on YouTube    |
 | video_title_translated     | object  | Translated title of the video                          |
 
-From here on, each column is a binary (int64) flag representing whether at least one object of the specific class was detected in the thumbnail (0 = Not detected, 1 = Detected).  Some of these columns may not appear in the data frame depending on whether a minimum number of objects of the corresponding class were not detected in the set of thumbnails.
+From here on, each column is a binary (int64) flag representing whether at least one object of the specific class was detected in the thumbnail (0 = Not detected, 1 = Detected). Some of these columns may not appear in the data frame depending on whether a minimum number of objects of the corresponding class were not detected in the set of thumbnails.
 
 | Name                       | Type  | Description                                                           |
 | -------------------------- | ----- | --------------------------------------------------------------------- |

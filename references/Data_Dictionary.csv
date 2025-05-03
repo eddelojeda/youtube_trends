@@ -1,0 +1,96 @@
+Name, Type, Description
+video_published_at, object, The date and time when the video was published
+video_category_id, object, Numeric ID representing the category of the video  
+video_duration, object, Duration of the video in ISO 8601 format (e.g. "PT10M15S" for 10 minutes and 15 seconds)
+video_view_count, float64, Total number of views for the video
+video_like_count, float64, Total number of likes for the video
+video_comment_count, float64, Total number of comments on the video
+channel_custom_url, object, Custom URL for the channel (if available)
+channel_view_count, float64, Total number of views across all videos on the channel
+channel_subscriber_count, float64, Total number of subscribers to the channel
+days_until_trend, float64, Total number of days until the video becomes a days_until_trend
+thumbnail_person, int64, Indicator if an object of the class person was detected in thumbnail
+thumbnail_bicycle, int64, Indicator if an object of the class bicycle was detected in thumbnail
+thumbnail_car, int64, Indicator if an object of the class car was detected in thumbnail
+thumbnail_motorcycle, int64, Indicator if an object of the class motorcycle was detected in thumbnail
+thumbnail_airplane, int64, Indicator if an object of the class airplane was detected in thumbnail
+thumbnail_bus, int64, Indicator if an object of the class bus was detected in thumbnail
+thumbnail_train, int64, Indicator if an object of the class train was detected in thumbnail
+thumbnail_truck, int64, Indicator if an object of the class truck was detected in thumbnail
+thumbnail_boat, int64, Indicator if an object of the class boat was detected in thumbnail
+thumbnail_traffic_light, int64, Indicator if an object of the class traffic_light was detected in thumbnail
+thumbnail_fire_hydrant, int64, Indicator if an object of the class fire_hydrant was detected in thumbnail
+thumbnail_stop_sign, int64, Indicator if an object of the class stop_sign was detected in thumbnail
+thumbnail_parking_meter, int64, Indicator if an object of the class parking_meter was detected in thumbnail
+thumbnail_bench, int64, Indicator if an object of the class bench was detected in thumbnail
+thumbnail_bird, int64, Indicator if an object of the class bird was detected in thumbnail
+thumbnail_cat, int64, Indicator if an object of the class cat was detected in thumbnail
+thumbnail_dog, int64, Indicator if an object of the class dog was detected in thumbnail
+thumbnail_horse, int64, Indicator if an object of the class horse was detected in thumbnail
+thumbnail_sheep, int64, Indicator if an object of the class sheep was detected in thumbnail
+thumbnail_cow, int64, Indicator if an object of the class cow was detected in thumbnail
+thumbnail_elephant, int64, Indicator if an object of the class elephant was detected in thumbnail
+thumbnail_bear, int64, Indicator if an object of the class bear was detected in thumbnail
+thumbnail_zebra, int64, Indicator if an object of the class zebra was detected in thumbnail
+thumbnail_giraffe, int64, Indicator if an object of the class giraffe was detected in thumbnail
+thumbnail_backpack, int64, Indicator if an object of the class backpack was detected in thumbnail
+thumbnail_umbrella, int64, Indicator if an object of the class umbrella was detected in thumbnail
+thumbnail_handbag, int64, Indicator if an object of the class handbag was detected in thumbnail
+thumbnail_tie, int64, Indicator if an object of the class tie was detected in thumbnail
+thumbnail_suitcase, int64, Indicator if an object of the class suitcase was detected in thumbnail
+thumbnail_frizbee, int64, Indicator if an object of the class frizbee was detected in thumbnail
+thumbnail_skis, int64, Indicator if an object of the class skis was detected in thumbnail
+thumbnail_snowboard, int64, Indicator if an object of the class snowboard was detected in thumbnail
+thumbnail_sports_ball, int64, Indicator if an object of the class sports_ball was detected in thumbnail
+thumbnail_kite, int64, Indicator if an object of the class kite was detected in thumbnail
+thumbnail_baseball_bat, int64, Indicator if an object of the class baseball_bat was detected in thumbnail
+thumbnail_baseball_glove, int64, Indicator if an object of the class baseball_glove was detected in thumbnail
+thumbnail_skateboard, int64, Indicator if an object of the class skateboard was detected in thumbnail
+thumbnail_surfboard, int64, Indicator if an object of the class surfboard was detected in thumbnail
+thumbnail_tennis_racket, int64, Indicator if an object of the class tennis_racket was detected in thumbnail
+thumbnail_bottle, int64, Indicator if an object of the class bottle was detected in thumbnail
+thumbnail_wine_glass, int64, Indicator if an object of the class wine_glass was detected in thumbnail
+thumbnail_cup, int64, Indicator if an object of the class cup was detected in thumbnail
+thumbnail_fork, int64, Indicator if an object of the class fork was detected in thumbnail
+thumbnail_knife, int64, Indicator if an object of the class knife was detected in thumbnail
+thumbnail_spoon, int64, Indicator if an object of the class spoon was detected in thumbnail
+thumbnail_bowl, int64, Indicator if an object of the class bowl was detected in thumbnail
+thumbnail_banana, int64, Indicator if an object of the class banana was detected in thumbnail
+thumbnail_apple, int64, Indicator if an object of the class apple was detected in thumbnail
+thumbnail_sandwich, int64, Indicator if an object of the class sandwich was detected in thumbnail
+thumbnail_orange, int64, Indicator if an object of the class orange was detected in thumbnail
+thumbnail_broccoli, int64, Indicator if an object of the class broccoli was detected in thumbnail
+thumbnail_carrot, int64, Indicator if an object of the class carrot was detected in thumbnail
+thumbnail_hot_dog, int64, Indicator if an object of the class hot_dog was detected in thumbnail
+thumbnail_pizza, int64, Indicator if an object of the class pizza was detected in thumbnail
+thumbnail_donut, int64, Indicator if an object of the class donut was detected in thumbnail
+thumbnail_cake, int64, Indicator if an object of the class cake was detected in thumbnail
+thumbnail_chair, int64, Indicator if an object of the class chair was detected in thumbnail
+thumbnail_couch, int64, Indicator if an object of the class couch was detected in thumbnail
+thumbnail_potted_plant, int64, Indicator if an object of the class potted_plant was detected in thumbnail
+thumbnail_bed, int64, Indicator if an object of the class bed was detected in thumbnail
+thumbnail_dining_table, int64, Indicator if an object of the class dining_table was detected in thumbnail
+thumbnail_toilet, int64, Indicator if an object of the class toilet was detected in thumbnail
+thumbnail_tv, int64, Indicator if an object of the class tv was detected in thumbnail
+thumbnail_laptop, int64, Indicator if an object of the class laptop was detected in thumbnail
+thumbnail_mouse, int64, Indicator if an object of the class mouse was detected in thumbnail
+thumbnail_remote, int64, Indicator if an object of the class remote was detected in thumbnail
+thumbnail_keyboard, int64, Indicator if an object of the class keyboard was detected in thumbnail
+thumbnail_cell_phone, int64, Indicator if an object of the class cell_phone was detected in thumbnail
+thumbnail_microwave, int64, Indicator if an object of the class microwave was detected in thumbnail
+thumbnail_oven, int64, Indicator if an object of the class oven was detected in thumbnail
+thumbnail_toaster, int64, Indicator if an object of the class toaster was detected in thumbnail
+thumbnail_sink, int64, Indicator if an object of the class sink was detected in thumbnail
+thumbnail_refrigerator, int64, Indicator if an object of the class refrigerator was detected in thumbnail
+thumbnail_book, int64, Indicator if an object of the class book was detected in thumbnail
+thumbnail_clock, int64, Indicator if an object of the class clock was detected in thumbnail
+thumbnail_vase, int64, Indicator if an object of the class vase was detected in thumbnail
+thumbnail_scissors, int64, Indicator if an object of the class scissors was detected in thumbnail
+thumbnail_teddy_bear, int64, Indicator if an object of the class teddy_bear was detected in thumbnail
+thumbnail_hair_drier, int64, Indicator if an object of the class hair_drier was detected in thumbnail
+thumbnail_toothbrush, int64, Indicator if an object of the class toothbrush was detected in thumbnail
+brightness, float64, Video thumbnail brightness
+contrast, float64, Video thumbnail contrast
+saturation, float64, Video thumbnail saturation
+video_title_language, object, Language of the video title as displayed on YouTube
+video_title_translated, object, Translated title of the video
