@@ -4,6 +4,8 @@ import emoji
 import torch
 import typer
 import shutil
+import langid
+import isodate
 import warnings
 import requests
 import subprocess
@@ -18,6 +20,8 @@ from loguru import logger
 from tkinter import filedialog
 from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
+from sklearn.decomposition import PCA
+from torchvision import models, transforms
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 from dateutil.relativedelta import relativedelta
@@ -40,6 +44,8 @@ def main(
     inter_path: Path = INTERIM_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
+    detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail. Default value: False."),
+    extract: bool = typer.Option(False, "--extract", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
 ):
@@ -65,7 +71,7 @@ def main(
         logger.info(f"New folder: {INTERIM_DATA_DIR}")
     elif inter_path.exists():
         inter_path.unlink()
-    first_process_dataset(size, weeks)
+    first_process_dataset(detect, extract,size, weeks)
 
     # -----------------------------------------
     # Creation of processed dataset
@@ -152,20 +158,18 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def first_process_dataset(size, weeks):
+def first_process_dataset(detect, extract, size, weeks):
     """ Initial process of raw dataset. """
     logger.info("Processing raw dataset...")    
     
     df = pd.read_csv(RAW_DATA_DIR / "dataset.csv")
 
+    df = df.drop(['video_id', 'video_trending_country', 'video_description', 'video_dimension', 'video_definition', 'video_licensed_content', 
+                  'channel_id',  'channel_title', 'channel_published_at', 'channel_description', 'channel_country', 'channel_video_count',
+                  'channel_have_hidden_subscribers', 'channel_localized_title', 'channel_localized_description'], axis=1)
+
     df['video_published_at'] = pd.to_datetime(df['video_published_at'], errors='coerce').dt.tz_localize(None)
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
-    df['days_until_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
-
-    cols_to_drop =['video_id', 'video_trending__date', 'video_trending_country', 'video_description', 'video_tags', 'video_dimension', 'video_definition', 
-                   'video_licensed_content', 'channel_id', 'channel_title', 'channel_description', 'channel_published_at', 'channel_country', 
-                   'channel_have_hidden_subscribers', 'channel_video_count', 'channel_localized_title', 'channel_localized_description']
-    df = df.drop(cols_to_drop, axis=1)
 
     df = df.sort_values(by='video_published_at', ascending=False)
     if weeks != 0:
@@ -174,14 +178,88 @@ def first_process_dataset(size, weeks):
     else:
         start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
         df = df[df['video_published_at'] >= start_date]
-    df = df.dropna()
     df.reset_index(drop=True, inplace=True)
 
-    df = thumbnail_parallel_processing(df, size)
-    df = thumbnails_stats_parallel(df) 
+    df['published_dayofweek'] = df['video_published_at'].dt.dayofweek
+    df['published_hour'] = df['video_published_at'].dt.hour
+    df['days_to_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
+    df = df.drop(['video_trending__date'], axis=1) 
+
+    durations = df['video_duration'].fillna('').astype(str).tolist()
+    with ThreadPoolExecutor() as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
+    df['video_duration'] = duration_secs
+
+    df['video_title_length'] = df['video_title'].str.split().str.len()
+    df['video_tag_count'] = df['video_tags'].str.split('|').str.len()
+    df['video_tag_count'] = df['video_tag_count'].fillna(0)
+    df = df.drop(['video_tags'], axis=1)
+
     df = process_titles_parallel(df)
-    df = df.drop(['video_default_thumbnail', 'video_title'], axis=1)
+
+    df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
+    df = pd.get_dummies(df, columns=['video_category_id'])
+
+    if detect:
+        df = thumbnail_parallel_detect(df, size)
+    df = thumbnails_parallel_stats(df)
+    if extract: 
+        df = thumbnail_parallel_embeddings(df)
+    df = df.drop(['video_default_thumbnail'], axis=1)
+
     df.to_csv(INTERIM_DATA_DIR / 'dataset.csv', index=False)
+
+# ---------------------------------------------
+
+def convert_duration(duration):
+    try:
+        return isodate.parse_duration(duration).total_seconds()
+    except:
+        return np.nan
+
+# ---------------------------------------------
+
+def detect_and_translate(title):
+    try:
+        lang = detect(title)
+    except:
+        return '', ''
+    
+    if lang == 'en':
+        return 'en', title
+    try:
+        translated = GoogleTranslator(source='auto', target='en').translate(title)
+        return lang, translated
+    except:
+        return lang, title
+
+# ---------------------------------------------
+
+def clean_title(title):
+    title = emoji.replace_emoji(title, replace='')
+    title = re.sub(r'[^\w\s]', '', title)
+    return title
+
+# ---------------------------------------------
+
+def process_titles_parallel(df):
+    titles = df['video_title'].fillna('').astype(str).tolist()
+    
+    with ThreadPoolExecutor() as executor:
+        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
+
+    languages = []
+    translations = []
+    
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
+        for future in tqdm(futures, desc="Processing video title"):
+            lang, translated = future.result()
+            languages.append(lang)
+            translations.append(translated)
+    
+    df['video_title_language'] = languages
+    df['video_title_translated'] = translations
+    return df
 
 # ---------------------------------------------
 
@@ -198,7 +276,7 @@ def detect_thumbnail(thumbnail_url, idx, class_names, model, pbar):
 
 # ---------------------------------------------
 
-def  thumbnail_parallel_processing(df, size):
+def  thumbnail_parallel_detect(df, size):
     thumbnail_urls = df['video_default_thumbnail'].values
 
     match size:
@@ -250,7 +328,7 @@ def thumbnail_stats(thumbnail_url, idx, pbar):
 
 # ---------------------------------------------
 
-def thumbnails_stats_parallel(df):
+def thumbnails_parallel_stats(df):
     thumbnail_urls = df['video_default_thumbnail'].values
     stats_array = np.zeros((len(thumbnail_urls), 3), dtype=float)
 
@@ -271,43 +349,60 @@ def thumbnails_stats_parallel(df):
 
 # ---------------------------------------------
 
-def detect_and_translate(title):
+def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
     try:
-        lang = detect(title)
-        translated = GoogleTranslator(source=lang, target='en').translate(title)
-    except:
-        lang = 'unknown'
-        translated = title
-    return lang, translated
+        response = requests.get(thumbnail_url, timeout=5)
+        img = Image.open(BytesIO(response.content)).convert('RGB')
+        img = transform(img).unsqueeze(0).to(device)  
+        with torch.no_grad():
+            features = model.features(img)
+            features = features.mean([2, 3]).squeeze().cpu().numpy() 
+    except Exception as e:
+        print(f"Error procesando {thumbnail_url}: {e}")
+        features = np.full((1280,), np.nan) 
+    pbar.update(1)
+    return idx, features
 
 # ---------------------------------------------
 
-def clean_title(title):
-    title = emoji.replace_emoji(title, replace='')
-    title = re.sub(r'[^\w\s]', '', title)
-    return title
-
-# ---------------------------------------------
-
-def process_titles_parallel(df):
-    titles = df['video_title'].fillna('').astype(str).tolist()
+def thumbnail_parallel_embeddings(df):
+    thumbnail_urls = df['video_default_thumbnail'].values
     
-    with ThreadPoolExecutor() as executor:
-        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
+    model = models.mobilenet_v2(pretrained=True)
+    model.eval()
+    model = model.to(device) 
+    
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-    languages = []
-    translations = []
-    
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
-        for future in tqdm(futures, desc="Processing video title"):
-            lang, translated = future.result()
-            languages.append(lang)
-            translations.append(translated)
-    
-    df['video_title_language'] = languages
-    df['video_title_translated'] = translations
-    return df
+    n_samples = len(thumbnail_urls)
+    embedding_dim = 1280  
+    embeddings_array = np.zeros((n_samples, embedding_dim), dtype=np.float32)
+
+    with tqdm(total=n_samples, desc="Extracting thumbnails embeddings") as pbar:
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(embedding_thumbnail, url, idx, transform, model, pbar)
+                for idx, url in enumerate(thumbnail_urls)
+            ]
+            for future in futures:
+                idx, embedding = future.result()
+                embeddings_array[idx] = embedding
+
+    pca_complete = PCA().fit(embeddings_array)
+    cumulative_variance = np.cumsum(pca_complete.explained_variance_ratio_)
+    n_components = np.searchsorted(cumulative_variance, 0.70) + 1 
+    n_components = min(n_components, 40)
+    pca = PCA(n_components=n_components)  
+    reduced_embeddings = pca.fit_transform(embeddings_array)
+
+    embed_cols = [f'thumb_emb_{i}' for i in range(reduced_embeddings.shape[1])]  
+    embeddings_df = pd.DataFrame(reduced_embeddings, columns=embed_cols)
+
+    return pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
