@@ -183,21 +183,13 @@ def first_process_dataset(detect, extract, size, weeks):
     df['published_dayofweek'] = df['video_published_at'].dt.dayofweek
     df['published_hour'] = df['video_published_at'].dt.hour
     df['days_to_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
-    df = df.drop(['video_trending__date'], axis=1) 
-
-    durations = df['video_duration'].fillna('').astype(str).tolist()
-    with ThreadPoolExecutor() as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
-    df['video_duration'] = duration_secs
+    df = df[df['days_to_trend'] >= 0]
 
     df['video_title_length'] = df['video_title'].str.split().str.len()
     df['video_tag_count'] = df['video_tags'].str.split('|').str.len()
     df['video_tag_count'] = df['video_tag_count'].fillna(0)
-    df = df.drop(['video_tags'], axis=1)
-
-    df = process_titles_parallel(df)
-
-    df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
-    df = pd.get_dummies(df, columns=['video_category_id'])
+    df = df.drop(['video_trending__date', 'video_tags'], axis=1)
+    df = df.dropna()
 
     if detect:
         df = thumbnail_parallel_detect(df, size)
@@ -205,6 +197,16 @@ def first_process_dataset(detect, extract, size, weeks):
     if extract: 
         df = thumbnail_parallel_embeddings(df)
     df = df.drop(['video_default_thumbnail'], axis=1)
+
+    durations = df['video_duration'].fillna('').astype(str).tolist()
+    with ThreadPoolExecutor() as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
+    df['video_duration'] = duration_secs
+
+    df = process_titles_parallel(df)
+
+    df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
+    df = pd.get_dummies(df, columns=['video_category_id']).astype(int)
+
 
     df.to_csv(INTERIM_DATA_DIR / 'dataset.csv', index=False)
 
@@ -221,6 +223,7 @@ def convert_duration(duration):
 def clean_title(title):
     title = emoji.replace_emoji(title, replace='')
     title = re.sub(r'[^\w\s]', '', title)
+    title = re.sub(r'\s+', ' ', title)     
     return title
 
 # ---------------------------------------------
@@ -229,8 +232,7 @@ def detect_and_translate(title):
     try:
         lang = detect(title)
     except:
-        return '', ''
-    
+        return '', title  
     if lang == 'en':
         return 'en', title
     try:
@@ -250,7 +252,7 @@ def process_titles_parallel(df):
     languages = []
     translations = []
     
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=64) as executor:
         futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
@@ -295,7 +297,7 @@ def  thumbnail_parallel_detect(df, size):
     detections_array = np.zeros((len(thumbnail_urls), len(class_names)), dtype=int)
     
     with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails class") as pbar:
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=64) as executor:
             futures = [
                 executor.submit(detect_thumbnail, thumbnail_url, idx, class_names, model, pbar)
                 for idx, thumbnail_url in enumerate(thumbnail_urls)
@@ -308,43 +310,47 @@ def  thumbnail_parallel_detect(df, size):
     detections_df['video_default_thumbnail'] = df['video_default_thumbnail'].values
     detections_df = detections_df.loc[:, (detections_df != detections_df.iloc[0]).any()]
     df = pd.concat([df, detections_df.iloc[:, :-1]], axis=1)
+    df = df.dropna()
 
     return df
 
 # ---------------------------------------------
 
 def thumbnail_stats(thumbnail_url, idx, pbar):
-    response = requests.get(thumbnail_url, timeout=10)
-    img = Image.open(BytesIO(response.content)).convert('RGB')
-    stat = ImageStat.Stat(img)
+    try:
+        response = requests.get(thumbnail_url, timeout=10)
+        img = Image.open(BytesIO(response.content)).convert('RGB')
+        stat = ImageStat.Stat(img)
 
-    brightness = sum(stat.mean) / 3
-    contrast = sum(stat.stddev) / 3
-    hsv = np.array(img.convert('HSV'))
-    saturation = hsv[:, :, 1].mean() / 255
+        brightness = sum(stat.mean) / 3
+        contrast = sum(stat.stddev) / 3
+        hsv = np.array(img.convert('HSV'))
+        saturation = hsv[:, :, 1].mean() / 255
 
-    pbar.update(1)
-    return idx, [brightness, contrast, saturation]
+        pbar.update(1)
+        return idx, [brightness, contrast, saturation]
+    except Exception:
+        pbar.update(1)
+        return idx, [np.nan, np.nan, np.nan]
 
 # ---------------------------------------------
 
 def thumbnails_parallel_stats(df):
-    thumbnail_urls = df['video_default_thumbnail'].values
-    stats_array = np.zeros((len(thumbnail_urls), 3), dtype=float)
+    urls = df['video_default_thumbnail'].values
+    stats_array = np.zeros((len(urls), 3), dtype=float)
 
-    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails stats") as pbar:
-        with ThreadPoolExecutor() as executor:
+    with tqdm(total=len(urls), desc="Computing thumbnail stats") as pbar:
+        with ThreadPoolExecutor(max_workers=64) as executor:
             futures = [
-                executor.submit(thumbnail_stats, thumbnail_url, idx, pbar) 
-                for idx, thumbnail_url in enumerate(thumbnail_urls)
+                executor.submit(thumbnail_stats, url, idx, pbar)
+                for idx, url in enumerate(urls)
             ]
             for future in futures:
                 idx, stats = future.result()
                 stats_array[idx] = stats
 
-    stats_df = pd.DataFrame(stats_array, columns=['brightness', 'contrast', 'saturation'])
-    stats_df['video_default_thumbnail'] = thumbnail_urls
-    df = pd.concat([df, stats_df.iloc[:, :-1]], axis=1)
+    stats_df = pd.DataFrame(stats_array, columns=["thumbnail_brightness", "thumbnail_contrast", "thumbnail_saturation"])
+    df = pd.concat([df, stats_df], axis=1)
     return df
 
 # ---------------------------------------------
@@ -383,7 +389,7 @@ def thumbnail_parallel_embeddings(df):
     embeddings_array = np.zeros((n_samples, embedding_dim), dtype=np.float32)
 
     with tqdm(total=n_samples, desc="Extracting thumbnails embeddings") as pbar:
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=48) as executor:
             futures = [
                 executor.submit(embedding_thumbnail, url, idx, transform, model, pbar)
                 for idx, url in enumerate(thumbnail_urls)
@@ -391,6 +397,9 @@ def thumbnail_parallel_embeddings(df):
             for future in futures:
                 idx, embedding = future.result()
                 embeddings_array[idx] = embedding
+    
+    valid_rows = ~np.isnan(embeddings_array).any(axis=1) 
+    embeddings_array = embeddings_array[valid_rows] 
 
     pca_complete = PCA().fit(embeddings_array)
     cumulative_variance = np.cumsum(pca_complete.explained_variance_ratio_)
@@ -401,8 +410,10 @@ def thumbnail_parallel_embeddings(df):
 
     embed_cols = [f'thumb_emb_{i}' for i in range(reduced_embeddings.shape[1])]  
     embeddings_df = pd.DataFrame(reduced_embeddings, columns=embed_cols)
+    df = pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
+    df = df.dropna()
 
-    return pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
+    return df
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
