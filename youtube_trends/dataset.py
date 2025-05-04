@@ -218,6 +218,13 @@ def convert_duration(duration):
 
 # ---------------------------------------------
 
+def clean_title(title):
+    title = emoji.replace_emoji(title, replace='')
+    title = re.sub(r'[^\w\s]', '', title)
+    return title
+
+# ---------------------------------------------
+
 def detect_and_translate(title):
     try:
         lang = detect(title)
@@ -231,13 +238,6 @@ def detect_and_translate(title):
         return lang, translated
     except:
         return lang, title
-
-# ---------------------------------------------
-
-def clean_title(title):
-    title = emoji.replace_emoji(title, replace='')
-    title = re.sub(r'[^\w\s]', '', title)
-    return title
 
 # ---------------------------------------------
 
