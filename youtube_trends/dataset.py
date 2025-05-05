@@ -48,6 +48,7 @@ def main(
     extract: bool = typer.Option(False, "--extract", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
+    threads: int = typer.Option(0, "--threads", help="Number of threads used for parallel data processing. Default value: 0 (Automatic selection based on number of processors)."),
 ):
     if size not in {"n", "s", "m", "l", "x"}:
         raise typer.BadParameter("Model must be one of: n, s, m, l, x")
@@ -71,7 +72,7 @@ def main(
         logger.info(f"New folder: {INTERIM_DATA_DIR}")
     elif inter_path.exists():
         inter_path.unlink()
-    first_process_dataset(detect, extract,size, weeks)
+    first_process_dataset(detect, extract, size, weeks, threads)
 
     # -----------------------------------------
     # Creation of processed dataset
@@ -158,7 +159,7 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def first_process_dataset(detect, extract, size, weeks):
+def first_process_dataset(detect, extract, size, weeks, threads):
     """ Initial process of raw dataset. """
     logger.info("Processing raw dataset...")    
     
@@ -172,11 +173,11 @@ def first_process_dataset(detect, extract, size, weeks):
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
 
     df = df.sort_values(by='video_published_at', ascending=False)
-    if weeks != 0:
-        start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
-        df = df[df['video_published_at'] >= start_date]
-    else:
+    if weeks == -1:
         start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
+        df = df[df['video_published_at'] >= start_dat
+    elif weeks > 0:
+        start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
         df = df[df['video_published_at'] >= start_date]
     df.reset_index(drop=True, inplace=True)
 
@@ -191,22 +192,27 @@ def first_process_dataset(detect, extract, size, weeks):
     df = df.drop(['video_trending__date', 'video_tags'], axis=1)
     df = df.dropna()
 
+    if threads == 0:
+        max_workers = None
+    else:
+        max_workers = threads
     if detect:
-        df = thumbnail_parallel_detect(df, size)
-    df = thumbnails_parallel_stats(df)
+        df = thumbnail_parallel_detect(df, size, max_workers)
+    df = thumbnails_parallel_stats(df, max_workers)
     if extract: 
-        df = thumbnail_parallel_embeddings(df)
+        df = thumbnail_parallel_embeddings(df, max_workers)
     df = df.drop(['video_default_thumbnail'], axis=1)
 
     durations = df['video_duration'].fillna('').astype(str).tolist()
-    with ThreadPoolExecutor() as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
     df['video_duration'] = duration_secs
 
-    df = process_titles_parallel(df)
+    df = process_titles_parallel(df, max_workers)
 
     df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
-    df = pd.get_dummies(df, columns=['video_category_id']).astype(int)
-
+    df = pd.get_dummies(df, columns=['video_category_id'])
+    dummy_cols = [col for col in df.columns if col.startswith('video_category_id_')]
+    df[dummy_cols] = df[dummy_cols].astype(int)
 
     df.to_csv(INTERIM_DATA_DIR / 'dataset.csv', index=False)
 
@@ -243,7 +249,7 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df):
+def process_titles_parallel(df, max_workers):
     titles = df['video_title'].fillna('').astype(str).tolist()
     
     with ThreadPoolExecutor() as executor:
@@ -252,7 +258,7 @@ def process_titles_parallel(df):
     languages = []
     translations = []
     
-    with ThreadPoolExecutor(max_workers=64) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
@@ -278,7 +284,7 @@ def detect_thumbnail(thumbnail_url, idx, class_names, model, pbar):
 
 # ---------------------------------------------
 
-def  thumbnail_parallel_detect(df, size):
+def  thumbnail_parallel_detect(df, size, max_workers):
     thumbnail_urls = df['video_default_thumbnail'].values
 
     match size:
@@ -297,7 +303,7 @@ def  thumbnail_parallel_detect(df, size):
     detections_array = np.zeros((len(thumbnail_urls), len(class_names)), dtype=int)
     
     with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails class") as pbar:
-        with ThreadPoolExecutor(max_workers=64) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(detect_thumbnail, thumbnail_url, idx, class_names, model, pbar)
                 for idx, thumbnail_url in enumerate(thumbnail_urls)
@@ -335,12 +341,12 @@ def thumbnail_stats(thumbnail_url, idx, pbar):
 
 # ---------------------------------------------
 
-def thumbnails_parallel_stats(df):
+def thumbnails_parallel_stats(df, max_workers):
     urls = df['video_default_thumbnail'].values
     stats_array = np.zeros((len(urls), 3), dtype=float)
 
     with tqdm(total=len(urls), desc="Computing thumbnail stats") as pbar:
-        with ThreadPoolExecutor(max_workers=64) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(thumbnail_stats, url, idx, pbar)
                 for idx, url in enumerate(urls)
@@ -357,7 +363,7 @@ def thumbnails_parallel_stats(df):
 
 def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
     try:
-        response = requests.get(thumbnail_url, timeout=5)
+        response = requests.get(thumbnail_url, timeout=10)
         img = Image.open(BytesIO(response.content)).convert('RGB')
         img = transform(img).unsqueeze(0).to(device)  
         with torch.no_grad():
@@ -371,7 +377,7 @@ def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
 
 # ---------------------------------------------
 
-def thumbnail_parallel_embeddings(df):
+def thumbnail_parallel_embeddings(df, max_workers):
     thumbnail_urls = df['video_default_thumbnail'].values
     
     model = models.mobilenet_v2(pretrained=True)
@@ -389,7 +395,7 @@ def thumbnail_parallel_embeddings(df):
     embeddings_array = np.zeros((n_samples, embedding_dim), dtype=np.float32)
 
     with tqdm(total=n_samples, desc="Extracting thumbnails embeddings") as pbar:
-        with ThreadPoolExecutor(max_workers=48) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(embedding_thumbnail, url, idx, transform, model, pbar)
                 for idx, url in enumerate(thumbnail_urls)
