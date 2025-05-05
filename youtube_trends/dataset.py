@@ -230,6 +230,7 @@ def clean_title(title):
     title = emoji.replace_emoji(title, replace='')
     title = re.sub(r'[^\w\s]', '', title)
     title = re.sub(r'\s+', ' ', title)     
+    
     return title
 
 # ---------------------------------------------
@@ -267,6 +268,7 @@ def process_titles_parallel(df, max_workers):
     
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
+
     return df
 
 # ---------------------------------------------
@@ -337,6 +339,7 @@ def thumbnail_stats(thumbnail_url, idx, pbar):
         return idx, [brightness, contrast, saturation]
     except Exception:
         pbar.update(1)
+
         return idx, [np.nan, np.nan, np.nan]
 
 # ---------------------------------------------
@@ -357,6 +360,7 @@ def thumbnails_parallel_stats(df, max_workers):
 
     stats_df = pd.DataFrame(stats_array, columns=["thumbnail_brightness", "thumbnail_contrast", "thumbnail_saturation"])
     df = pd.concat([df, stats_df], axis=1)
+
     return df
 
 # ---------------------------------------------
@@ -373,6 +377,7 @@ def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
         print(f"Error procesando {thumbnail_url}: {e}")
         features = np.full((1280,), np.nan) 
     pbar.update(1)
+    
     return idx, features
 
 # ---------------------------------------------
