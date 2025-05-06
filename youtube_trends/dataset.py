@@ -1,8 +1,10 @@
 import os
 import re
+import time
 import emoji
 import torch
 import typer
+import random
 import shutil
 import langid
 import isodate
@@ -20,13 +22,17 @@ from loguru import logger
 from tkinter import filedialog
 from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
+from urllib3.util.retry import Retry
 from sklearn.decomposition import PCA
+from requests.adapters import HTTPAdapter
 from torchvision import models, transforms
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder
 from dateutil.relativedelta import relativedelta
-from concurrent.futures import ThreadPoolExecutor
+from sklearn.feature_extraction.text import TfidfVectorizer
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from youtube_trends.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
 DetectorFactory.seed = 0 
@@ -45,8 +51,11 @@ def main(
     inter_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
+    vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False."),
+    translate: bool = typer.Option(False, "--translate", "-t", help="translate the video titles to english. Default value: False."),
     detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail. Default value: False."),
-    extract: bool = typer.Option(False, "--extract", "-e", help="Extract embeddings from thumbnails. Default value: False."),
+    stats: bool = typer.Option(False, "--stats", "-s", help="Compute the stats brightness, contrast and saturation in thumbnail. Default value: False."),
+    embed: bool = typer.Option(False, "--embed", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
     threads: int = typer.Option(0, "--threads", help="Number of threads used for parallel data processing. Default value: 0 (Automatic selection based on number of processors)."),
@@ -76,7 +85,7 @@ def main(
             logger.info(f"New folder: {PROCESSED_DATA_DIR}")
         elif inter_path.exists():
             inter_path.unlink()
-        process_dataset(detect, extract, size, weeks, threads)
+        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -123,7 +132,7 @@ def download_dataset():
 # ---------------------------------------------------------------------------------------------------------------------------    
 
 def setup_kaggle_credentials():
-     """
+    """
     Set up Kaggle API credentials.
 
     This function ensures that the required directory for Kaggle credentials exists.
@@ -197,7 +206,7 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def process_dataset(detect, extract, size, weeks, threads, threshold = 0.1):
+def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads, threshold = 0.1):
     """
     Processes the raw YouTube trending dataset by cleaning, transforming, and optionally extracting image features.
 
@@ -240,7 +249,7 @@ def process_dataset(detect, extract, size, weeks, threads, threshold = 0.1):
     df = df.sort_values(by='video_published_at', ascending=False)
     if weeks == -1:
         start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
-        df = df[df['video_published_at'] >= start_dat]
+        df = df[df['video_published_at'] >= start_date]
     elif weeks > 0:
         start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
         df = df[df['video_published_at'] >= start_date]
@@ -255,31 +264,41 @@ def process_dataset(detect, extract, size, weeks, threads, threshold = 0.1):
     df['video_tag_count'] = df['video_tags'].str.split('|').str.len()
     df['video_tag_count'] = df['video_tag_count'].fillna(0)
     df = df.drop(['video_trending__date', 'video_tags'], axis=1)
+    missing_values = ['nan', 'NaN', 'null', 'None', '', 'NULL', 'N/A', 'na']
+    df.replace(missing_values, np.nan, inplace=True)
     df = df.dropna()
 
+    session = create_retry_session()
     if threads == 0:
         max_workers = None
     else:
         max_workers = threads
     if detect:
         df = thumbnail_parallel_detect(df, size, max_workers)
-    df = thumbnails_parallel_stats(df, max_workers)
-    if extract: 
+    if stats:
+        df = thumbnails_parallel_stats(df, max_workers)
+    df.replace(missing_values, np.nan, inplace=True)
+    df = df.dropna()
+    if embed: 
         df = thumbnail_parallel_embeddings(df, max_workers)
     df = df.drop(['video_default_thumbnail'], axis=1)
+    if vectorize:
+        df = titles_parallel_vectorize(df, max_workers)
+    if translate:
+        df = titles_parallel_translate(df, max_workers)
+    df = df.drop(['video_title'], axis=1)
 
     durations = df['video_duration'].fillna('').astype(str).tolist()
     with ThreadPoolExecutor(max_workers=max_workers) as executor: 
         duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
     df['video_duration'] = duration_secs
 
-    df = process_titles_parallel(df, max_workers)
-
     df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
-    df = pd.get_dummies(df, columns=['video_category_id'])
+    df = pd.get_dummies(df, columns=['video_category_id'], drop_first=False)
     dummy_cols = [col for col in df.columns if col.startswith('video_category_id_')]
     df[dummy_cols] = df[dummy_cols].astype(int)
-    df[dummy_cols] = df[dummy_cols].loc[:, df[dummy_cols].apply(lambda col: col.mean() > threshold and col.mean() < 1.0 - threshold)]
+    filter_cols = [col for col in dummy_cols if threshold < df[col].mean() < 1.0 - threshold]
+    df = df[filter_cols + [col for col in df.columns if col not in dummy_cols]]
     df = df.dropna()
 
     df.to_csv(PROCESSED_DATA_DIR / 'dataset.csv', index=False)
@@ -315,16 +334,39 @@ def clean_title(title):
     - str: A cleaned version of the title with no emojis, punctuation, or redundant spaces.
     """
 
+    title = title.lower()
     title = emoji.replace_emoji(title, replace='')
-    title = re.sub(r'[^\w\s]', '', title)
-    title = re.sub(r'\s+', ' ', title)     
+    title = re.sub(r'http\S+|www\S+|https\S+', '', title)
+    title = re.sub(r'[^a-zA-Z0-9\s]', '', title)
+    title = re.sub(r'\s+', ' ', title).strip() 
 
     return title
 
 # ---------------------------------------------
 
+def detect_language(title):
+    """
+    This function detects the language of a given video title using the langdetect library.
+
+    It attempts to detect the language of the provided title. If the language detection fails for any reason, 
+    it returns 'unknown' as the language.
+
+    Args:
+    - title (str): The video title whose language needs to be detected.
+
+    Returns:
+    - str: The detected language code (e.g., 'en' for English, 'es' for Spanish) or 'unknown' if detection fails.
+    """
+
+    try:
+        return detect(title)
+    except:
+        return 'unknown'
+
+# ---------------------------------------------
+
 def detect_and_translate(title):
-     """
+    """
     Detects the language of a given text and translates it to English if it's not already in English.
 
     Args:
@@ -339,9 +381,9 @@ def detect_and_translate(title):
     try:
         lang = detect(title)
     except:
-        return '', title  
+        return 'other', title  
     if lang == 'en':
-        return 'en', title
+        return lang, title
     try:
         translated = GoogleTranslator(source='auto', target='en').translate(title)
         return lang, translated
@@ -350,8 +392,8 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df, max_workers):
-     """
+def titles_parallel_translate(df, max_workers):
+    """
     Cleans and processes video titles in parallel using thread-based execution. Fill and cleans missing video titles. 
     Detects the language and translates each cleaned title .
 
@@ -364,24 +406,151 @@ def process_titles_parallel(df, max_workers):
     """
 
     titles = df['video_title'].fillna('').astype(str).tolist()
-    
+
     with ThreadPoolExecutor() as executor:
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
     languages = []
     translations = []
-    
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
             languages.append(lang)
             translations.append(translated)
-    
+
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
 
     return df
+
+# ---------------------------------------------
+
+def one_hot_encoding(df):
+    """
+    This function performs one-hot encoding on the 'video_title_language' column of a given DataFrame.
+
+    The function uses scikit-learn's `OneHotEncoder` to convert the categorical language data in the 'video_title_language'
+    column into a format suitable for machine learning models. Each unique language is represented as a separate binary feature.
+    The encoded DataFrame contains columns for each language, with 1 indicating the presence of that language and 0 otherwise.
+    
+    Args:
+    - df (DataFrame): The input DataFrame containing a column 'video_title_language' with categorical language data.
+    
+    Returns:
+    - df_language (DataFrame): A new DataFrame containing the one-hot encoded language features.
+    - encoder (OneHotEncoder): The fitted OneHotEncoder object used to perform the encoding.
+    """
+
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    language_encoded = encoder.fit_transform(df[['video_title_language']])
+    df_language = pd.DataFrame(language_encoded, columns=encoder.get_feature_names_out(['video_title_language']), index=df.index)
+    
+    return df_language, encoder
+
+# ---------------------------------------------
+
+def tfidf_vectorization(df, max_features=500):
+    """
+    This function performs TF-IDF vectorization on the 'video_title' column of the input DataFrame.
+    It cleans the titles using the `clean_title` function and then applies TF-IDF transformation 
+    to extract the most important features from the text data.
+
+    Args:
+    df (pd.DataFrame): The input DataFrame containing a column 'video_title' with text data.
+    max_features (int, optional): The maximum number of features (words) to extract using TF-IDF. Default is 500.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the TF-IDF features as columns, with the same index as the input DataFrame.
+    TfidfVectorizer: The fitted TF-IDF vectorizer used to transform the data.
+    """
+
+    vectorizer = TfidfVectorizer(max_features=max_features)
+    X_tfidf = vectorizer.fit_transform(df['video_title'].astype(str).apply(clean_title))
+    tfidf_df = pd.DataFrame(X_tfidf.toarray(), columns=vectorizer.get_feature_names_out(), index=df.index)
+    
+    return tfidf_df, vectorizer
+
+# ---------------------------------------------
+
+def titles_parallel_vectorize(df, max_workers, max_features=500):
+    """
+    This function performs parallel processing to clean and vectorize the titles in the given DataFrame.
+    It uses `ThreadPoolExecutor` to execute two tasks concurrently: 
+    1. TF-IDF vectorization of the video titles.
+    2. One-hot encoding of the video language.
+
+    Args:
+    - df (pandas.DataFrame): The input DataFrame containing the video titles and language information.
+    - max_features (int): The maximum number of features to extract during TF-IDF vectorization (default is 500).
+
+    Returns:
+    - df (pandas.DataFrame): The original DataFrame with the TF-IDF features and one-hot encoded language columns added,
+                              and the 'video_title' column removed.
+    """
+
+    if 'video_title_language' not in df.columns:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(detect_language, title): idx
+                for idx, title in df['video_title'].items()
+            }
+
+            languages = {}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Detecting languages"):
+                idx = futures[future]
+                try:
+                    languages[idx] = future.result()
+                except Exception as e:
+                    languages[idx] = 'unknown'
+            
+            df['video_title_language'] = df.index.map(languages)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(tfidf_vectorization, df, max_features): 'tfidf_vectorization',
+            executor.submit(one_hot_encoding, df): 'one_hot_encoding'
+        }
+
+        results = {}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Vectorizing titles"):
+            task_name = futures[future]
+            results[task_name] = future.result()
+
+    tfidf_df, vectorizer = results['tfidf_vectorization'] 
+    lang_df, encoder = results['one_hot_encoding'] 
+
+    df = pd.concat([df, tfidf_df, lang_df], axis=1)
+
+    return df
+
+# ---------------------------------------------
+
+def create_retry_session():
+    """
+    Creates and returns a requests Session object with automatic retry logic.
+
+    The session is configured to retry failed HTTP requests up to 3 times 
+    with an exponential backoff (1s, 2s, 4s) for specific server error codes 
+    (500, 502, 503, 504). This helps improve reliability when dealing with 
+    temporary server issues or intermittent network errors.
+    
+    Returns:
+        requests.Session: A session object with retry capabilities.
+    """
+
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        raise_on_status=False
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 # ---------------------------------------------
 
@@ -414,7 +583,7 @@ def detect_thumbnail(thumbnail_url, idx, class_names, model, pbar):
 # ---------------------------------------------
 
 def  thumbnail_parallel_detect(df, size, max_workers, threshold = 0.1):
-     """
+    """
     Detects objects in the thumbnails of YouTube videos using a YOLOv5 model, with parallel processing.
 
     Args:
@@ -462,8 +631,9 @@ def  thumbnail_parallel_detect(df, size, max_workers, threshold = 0.1):
     
     detections_df = pd.DataFrame(detections_array, columns=class_names)
     detections_df['video_default_thumbnail'] = df['video_default_thumbnail'].values 
+    detections_df = detections_df.iloc[:, :-1]
     detections_df = detections_df.loc[:, detections_df.apply(lambda col: col.mean() > threshold and col.mean() < 1.0 - threshold)]
-    df = pd.concat([df, detections_df.iloc[:, :-1]], axis=1)
+    df = pd.concat([df, detections_df], axis=1)
     df = df.dropna()
 
     return df
@@ -501,7 +671,7 @@ def thumbnail_stats(thumbnail_url, idx, pbar):
 
         pbar.update(1)
         return idx, [brightness, contrast, saturation]
-    except Exception:
+    except Exception as e:
         pbar.update(1)
 
         return idx, [np.nan, np.nan, np.nan]
@@ -509,7 +679,7 @@ def thumbnail_stats(thumbnail_url, idx, pbar):
 # ---------------------------------------------
 
 def thumbnails_parallel_stats(df, max_workers):
-     """
+    """
     Computes the brightness, contrast, and saturation statistics for each thumbnail in the provided DataFrame.  The statistics 
     are calculated in parallel using a ThreadPoolExecutor for faster processing. A MinMax scaling is applied to the computed 
     statistics for further normalization
@@ -542,13 +712,10 @@ def thumbnails_parallel_stats(df, max_workers):
                 idx, stats = future.result()
                 stats_array[idx] = stats
 
-    df_stats = pd.DataFrame(stats_array, columns=["thumbnail_brightness", "thumbnail_contrast", "thumbnail_saturation"])
-    
+    df_stats = pd.DataFrame(stats_array)
     scaler = MinMaxScaler()
-    df_stats_scaled[features] = scaler.fit_transform(df_stats_scaled[features])
-    df_stats_scaled.describe()
-
-    df = pd.concat([df, df_stats], axis=1)
+    df_stats_scaled = pd.DataFrame(scaler.fit_transform(df_stats), columns=["thumbnail_brightness", "thumbnail_contrast", "thumbnail_saturation"])
+    df = pd.concat([df, df_stats_scaled], axis=1)
 
     return df
 
@@ -582,7 +749,6 @@ def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
             features = model.features(img)
             features = features.mean([2, 3]).squeeze().cpu().numpy() 
     except Exception as e:
-        print(f"Error procesando {thumbnail_url}: {e}")
         features = np.full((1280,), np.nan) 
     pbar.update(1)
     
