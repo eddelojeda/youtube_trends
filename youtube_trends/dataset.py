@@ -241,7 +241,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
 
     df = df.drop(['video_id', 'video_trending_country', 'video_description', 'video_dimension', 'video_definition', 'video_licensed_content', 
                   'channel_id',  'channel_title', 'channel_published_at', 'channel_description', 'channel_country', 'channel_video_count',
-                  'channel_have_hidden_subscribers', 'channel_localized_title', 'channel_localized_description'], axis=1)
+                  'channel_custom_url', 'channel_have_hidden_subscribers', 'channel_localized_title', 'channel_localized_description'], axis=1)
 
     df['video_published_at'] = pd.to_datetime(df['video_published_at'], errors='coerce').dt.tz_localize(None)
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
@@ -286,7 +286,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
         df = titles_parallel_vectorize(df, max_workers)
     if translate:
         df = titles_parallel_translate(df, max_workers)
-    df = df.drop(['video_title'], axis=1)
+    df = df.drop(['video_title', 'video_title_language'], axis=1)
 
     durations = df['video_duration'].fillna('').astype(str).tolist()
     with ThreadPoolExecutor(max_workers=max_workers) as executor: 
