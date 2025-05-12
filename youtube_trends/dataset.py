@@ -632,9 +632,7 @@ def  thumbnail_parallel_detect(df, size, max_workers, threshold = 0.1):
     detections_df = pd.DataFrame(detections_array, columns=class_names)
     detections_df['video_default_thumbnail'] = df['video_default_thumbnail'].values 
     detections_df = detections_df.iloc[:, :-1]
-    detections_df = detections_df.loc[:, detections_df.apply(lambda col: col.mean() > threshold and col.mean() < 1.0 - threshold)]
     df = pd.concat([df, detections_df], axis=1)
-    df = df.dropna()
 
     return df
 
@@ -799,21 +797,10 @@ def thumbnail_parallel_embeddings(df, max_workers, max_components = 40):
                 idx, embedding = future.result()
                 embeddings_array[idx] = embedding
     
-    valid_rows = ~np.isnan(embeddings_array).any(axis=1) 
-    embeddings_array = embeddings_array[valid_rows] 
-
-    pca_complete = PCA().fit(embeddings_array)
-    cumulative_variance = np.cumsum(pca_complete.explained_variance_ratio_)
-    n_components = np.searchsorted(cumulative_variance, 0.70) + 1 
-    n_components = min(n_components, max_components)
-    pca = PCA(n_components=n_components)  
-    reduced_embeddings = pca.fit_transform(embeddings_array)
-
-    embed_cols = [f'thumb_emb_{i}' for i in range(reduced_embeddings.shape[1])]  
-    embeddings_df = pd.DataFrame(reduced_embeddings, columns=embed_cols)
+    embed_cols = [f'thumb_emb_{i}' for i in range(embeddings_array.shape[1])]  
+    embeddings_df = pd.DataFrame(embeddings_array, columns=embed_cols)
     df = pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
-    df = df.dropna()
-
+    
     return df
 
 # ---------------------------------------------------------------------------------------------------------------------------    
