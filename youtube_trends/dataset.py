@@ -1,8 +1,10 @@
 import os
 import re
+import time
 import emoji
 import torch
 import typer
+import random
 import shutil
 import langid
 import isodate
@@ -20,13 +22,18 @@ from loguru import logger
 from tkinter import filedialog
 from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
+from urllib3.util.retry import Retry
 from sklearn.decomposition import PCA
+from requests.adapters import HTTPAdapter
 from torchvision import models, transforms
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder
 from dateutil.relativedelta import relativedelta
-from concurrent.futures import ThreadPoolExecutor
-from youtube_trends.config import RAW_DATA_DIR, INTERIM_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
+from sklearn.feature_extraction.text import TfidfVectorizer
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from youtube_trends.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, KAGGLE_CREDENTIALS_DIR
 
 DetectorFactory.seed = 0 
 warnings.filterwarnings('ignore')
@@ -41,13 +48,17 @@ def main(
     # Default paths and parameters
     # -----------------------------------------
     input_path: Path = RAW_DATA_DIR / "dataset.csv",
-    inter_path: Path = INTERIM_DATA_DIR / "dataset.csv",
+    inter_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
+    vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False."),
+    translate: bool = typer.Option(False, "--translate", "-t", help="translate the video titles to english. Default value: False."),
     detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail. Default value: False."),
-    extract: bool = typer.Option(False, "--extract", "-e", help="Extract embeddings from thumbnails. Default value: False."),
+    stats: bool = typer.Option(False, "--stats", "-s", help="Compute the stats brightness, contrast and saturation in thumbnail. Default value: False."),
+    embed: bool = typer.Option(False, "--embed", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
+    threads: int = typer.Option(0, "--threads", help="Number of threads used for parallel data processing. Default value: 0 (Automatic selection based on number of processors)."),
 ):
     if size not in {"n", "s", "m", "l", "x"}:
         raise typer.BadParameter("Model must be one of: n, s, m, l, x")
@@ -64,31 +75,37 @@ def main(
         download_dataset()
 
     # -----------------------------------------
-    # Creation of interim dataset
-    # -----------------------------------------    
-    if not os.path.exists(INTERIM_DATA_DIR):
-        os.makedirs(INTERIM_DATA_DIR)
-        logger.info(f"New folder: {INTERIM_DATA_DIR}")
-    elif inter_path.exists():
-        inter_path.unlink()
-    first_process_dataset(detect, extract,size, weeks)
-
-    # -----------------------------------------
     # Creation of processed dataset
     # -----------------------------------------    
-    '''
-    if not os.path.exists(PROCESSED_DATA_DIR):
-        os.makedirs(PROCESSED_DATA_DIR)
-        logger.info(f"New folder: {PROCESSED_DATA_DIR}")
-    elif output_path.exists():
-        output_path.unlink()
-    final_process_dataset()
-    '''
-    
+    if not os.path.exists(RAW_DATA_DIR / "dataset.csv"):
+        print("No dataset available")
+    else:
+        if not os.path.exists(PROCESSED_DATA_DIR):
+            os.makedirs(PROCESSED_DATA_DIR)
+            logger.info(f"New folder: {PROCESSED_DATA_DIR}")
+        elif inter_path.exists():
+            inter_path.unlink()
+        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads)
+        
 # ---------------------------------------------------------------------------------------------------------------------------
 
 def download_dataset():
-    """ Download dataset from Kaggle. """
+    """
+    Downloads the 'YouTube Trending Videos Global' dataset from Kaggle and saves it to the RAW_DATA_DIR.
+
+    This function uses the Kaggle API to download and unzip the dataset into the predefined RAW_DATA_DIR directory.
+    It then renames the extracted CSV file to 'dataset.csv' for standardization. It also shows a progress bar during
+    the download process and handles exceptions if the download fails.
+
+    Requirements:
+        - Kaggle API credentials must be properly configured (via setup_kaggle_credentials).
+        - The 'kaggle' CLI must be installed and accessible.
+        - tqdm for progress visualization.
+
+    Raises:
+        subprocess.CalledProcessError: If the download process encounters an error.
+    """
+
     dataset_url = "canerkonuk/youtube-trending-videos-global"
     download_command = [
         "kaggle", "datasets", "download", dataset_url, 
@@ -115,7 +132,15 @@ def download_dataset():
 # ---------------------------------------------------------------------------------------------------------------------------    
 
 def setup_kaggle_credentials():
-    """ Setup Kaggle credentials. """
+    """
+    Set up Kaggle API credentials.
+
+    This function ensures that the required directory for Kaggle credentials exists.
+    If it does not, it creates the directory and adds the Kaggle API token by calling `add_kaggle_token()`.
+    If the directory exists but the credentials file (`kaggle.json`) is missing, it also calls `add_kaggle_token()`.
+    Finally, it sets the environment variable `KAGGLE_CONFIG_DIR` so the Kaggle API knows where to find the credentials.
+    """
+    
     if not os.path.exists(KAGGLE_CREDENTIALS_DIR):
         os.makedirs(KAGGLE_CREDENTIALS_DIR)
         add_kaggle_token()
@@ -128,7 +153,16 @@ def setup_kaggle_credentials():
 # ---------------------------------------------
 
 def add_kaggle_token():
-    """Add Kaggle token to repository."""
+    """
+    Launches a simple GUI window to prompt the user to select their 'kaggle.json' API token file.
+
+    This function uses a themed Tkinter window to display a file selection prompt.
+    The selected file (typically 'kaggle.json') is expected to be the user's Kaggle API token,
+    which is required to authenticate and download datasets from Kaggle via the API.
+
+    Once the user selects the file, it should be processed by the `open_file_dialog` function (not shown here).
+    """
+
     root = ttk.Window(themename="litera")
     root.title("Kaggle Token Setup")
     root.geometry("350x120")
@@ -144,6 +178,20 @@ def add_kaggle_token():
 # ---------------------------------------------
 
 def open_file_dialog():
+    """
+    Opens a file selection dialog for the user to choose the 'kaggle.json' file.
+
+    - If a file is selected:
+        * Creates the Kaggle credentials directory if it doesn't exist.
+        * Moves the selected file to the directory as 'kaggle.json'.
+        * Logs a success message.
+    
+    - If no file is selected:
+        * Logs an error message.
+
+    Finally, the function closes the Tkinter root window.
+    """
+
     file_path = filedialog.askopenfilename(
         title="Select kaggle.json file",
         filetypes=[("JSON files", "*.json")]
@@ -158,59 +206,116 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def first_process_dataset(detect, extract, size, weeks):
-    """ Initial process of raw dataset. """
+def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads, threshold = 0.1):
+    """
+    Processes the raw YouTube trending dataset by cleaning, transforming, and optionally extracting image features.
+
+    Args:
+        detect (bool): If True, performs object detection on thumbnails using a pretrained model.
+        extract (bool): If True, extracts embeddings from thumbnails using a neural network.
+        size (int): Image size to which thumbnails will be resized for detection/embedding.
+        weeks (int): Number of weeks to retain from the most recent publication date. If -1, filters only dates from the day before the most recent video.
+        threads (int): Number of threads for parallel processing. If 0, uses all available cores.
+        threshold (float, optional): A threshold for filtering video category columns, excluding categories with very low or very high prevalence. Default is 0.1.
+
+    Steps:
+        - Loads and filters raw dataset columns.
+        - Parses and standardizes date fields.
+        - Filters data based on the `weeks` parameter.
+        - Extracts temporal features (hour, day of week, days to trend).
+        - Computes simple textual features (title length, tag count).
+        - Optionally performs thumbnail object detection and feature extraction in parallel.
+        - Converts video durations into seconds using parallel threads.
+        - Processes video titles (e.g., cleaning or embedding).
+        - One-hot encodes video category IDs.
+        - Filters out category columns with low or high prevalence using the `threshold` parameter.
+        - Saves the processed dataset as a CSV file.
+
+    Output:
+        Saves the processed DataFrame to `PROCESSED_DATA_DIR / 'dataset.csv'`.
+    """
+
     logger.info("Processing raw dataset...")    
     
     df = pd.read_csv(RAW_DATA_DIR / "dataset.csv")
 
     df = df.drop(['video_id', 'video_trending_country', 'video_description', 'video_dimension', 'video_definition', 'video_licensed_content', 
                   'channel_id',  'channel_title', 'channel_published_at', 'channel_description', 'channel_country', 'channel_video_count',
-                  'channel_have_hidden_subscribers', 'channel_localized_title', 'channel_localized_description'], axis=1)
+                  'channel_custom_url', 'channel_have_hidden_subscribers', 'channel_localized_title', 'channel_localized_description'], axis=1)
 
     df['video_published_at'] = pd.to_datetime(df['video_published_at'], errors='coerce').dt.tz_localize(None)
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
 
     df = df.sort_values(by='video_published_at', ascending=False)
-    if weeks != 0:
-        start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
-        df = df[df['video_published_at'] >= start_date]
-    else:
+    if weeks == -1:
         start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
+        df = df[df['video_published_at'] >= start_date]
+    elif weeks > 0:
+        start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
         df = df[df['video_published_at'] >= start_date]
     df.reset_index(drop=True, inplace=True)
 
     df['published_dayofweek'] = df['video_published_at'].dt.dayofweek
     df['published_hour'] = df['video_published_at'].dt.hour
     df['days_to_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
-    df = df.drop(['video_trending__date'], axis=1) 
-
-    durations = df['video_duration'].fillna('').astype(str).tolist()
-    with ThreadPoolExecutor() as executor: duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
-    df['video_duration'] = duration_secs
+    df = df[df['days_to_trend'] >= 0]
 
     df['video_title_length'] = df['video_title'].str.split().str.len()
     df['video_tag_count'] = df['video_tags'].str.split('|').str.len()
     df['video_tag_count'] = df['video_tag_count'].fillna(0)
-    df = df.drop(['video_tags'], axis=1)
+    df = df.drop(['video_trending__date', 'video_tags'], axis=1)
+    missing_values = ['nan', 'NaN', 'null', 'None', '', 'NULL', 'N/A', 'na']
+    df.replace(missing_values, np.nan, inplace=True)
+    df = df.dropna()
 
-    df = process_titles_parallel(df)
+    session = create_retry_session()
+    if threads == 0:
+        max_workers = None
+    else:
+        max_workers = threads
+    if detect:
+        df = thumbnail_parallel_detect(df, size, max_workers)
+    if stats:
+        df = thumbnails_parallel_stats(df, max_workers)
+    df.replace(missing_values, np.nan, inplace=True)
+    df = df.dropna()
+    if embed: 
+        df = thumbnail_parallel_embeddings(df, max_workers)
+    df = df.drop(['video_default_thumbnail'], axis=1)
+    if vectorize:
+        df = titles_parallel_vectorize(df, max_workers)
+    if translate:
+        df = titles_parallel_translate(df, max_workers)
+    df = df.drop(['video_title', 'video_title_language'], axis=1)
+
+    durations = df['video_duration'].fillna('').astype(str).tolist()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor: 
+        duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
+    df['video_duration'] = duration_secs
 
     df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
-    df = pd.get_dummies(df, columns=['video_category_id'])
+    df = pd.get_dummies(df, columns=['video_category_id'], drop_first=False)
+    dummy_cols = [col for col in df.columns if col.startswith('video_category_id_')]
+    df[dummy_cols] = df[dummy_cols].astype(int)
+    filter_cols = [col for col in dummy_cols if threshold < df[col].mean() < 1.0 - threshold]
+    df = df[filter_cols + [col for col in df.columns if col not in dummy_cols]]
+    df = df.dropna()
 
-    if detect:
-        df = thumbnail_parallel_detect(df, size)
-    df = thumbnails_parallel_stats(df)
-    if extract: 
-        df = thumbnail_parallel_embeddings(df)
-    df = df.drop(['video_default_thumbnail'], axis=1)
-
-    df.to_csv(INTERIM_DATA_DIR / 'dataset.csv', index=False)
+    df.to_csv(PROCESSED_DATA_DIR / 'dataset.csv', index=False)
 
 # ---------------------------------------------
 
 def convert_duration(duration):
+    """
+    Converts an ISO 8601 duration string to total seconds.
+
+    Args:
+        duration (str): A string representing a duration in ISO 8601 format (e.g., 'PT1H2M10S').
+
+    Returns:
+        float: Duration in total seconds. Returns NaN if parsing fails.
+    """
+
     try:
         return isodate.parse_duration(duration).total_seconds()
     except:
@@ -219,20 +324,66 @@ def convert_duration(duration):
 # ---------------------------------------------
 
 def clean_title(title):
+    """
+    Cleans a video title by removing emojis, punctuation, and extra whitespace.
+
+    Args:
+    - title (str): The original title string to be cleaned.
+
+    Returns:
+    - str: A cleaned version of the title with no emojis, punctuation, or redundant spaces.
+    """
+
+    title = title.lower()
     title = emoji.replace_emoji(title, replace='')
-    title = re.sub(r'[^\w\s]', '', title)
+    title = re.sub(r'http\S+|www\S+|https\S+', '', title)
+    title = re.sub(r'[^a-zA-Z0-9\s]', '', title)
+    title = re.sub(r'\s+', ' ', title).strip() 
+
     return title
 
 # ---------------------------------------------
 
+def detect_language(title):
+    """
+    This function detects the language of a given video title using the langdetect library.
+
+    It attempts to detect the language of the provided title. If the language detection fails for any reason, 
+    it returns 'unknown' as the language.
+
+    Args:
+    - title (str): The video title whose language needs to be detected.
+
+    Returns:
+    - str: The detected language code (e.g., 'en' for English, 'es' for Spanish) or 'unknown' if detection fails.
+    """
+
+    try:
+        return detect(title)
+    except:
+        return 'unknown'
+
+# ---------------------------------------------
+
 def detect_and_translate(title):
+    """
+    Detects the language of a given text and translates it to English if it's not already in English.
+
+    Args:
+        title (str): The input text (e.g., a video title or description).
+
+    Returns:
+        tuple: A tuple (lang, translated_text) where:
+            - lang (str): The detected language code (e.g., 'en', 'es', 'fr').
+            - translated_text (str): The translated text in English if applicable, or the original text.
+    """
+
     try:
         lang = detect(title)
     except:
-        return '', ''
-    
+        return 'other', title  
     if lang == 'en':
-        return 'en', title
+        return lang, title
     try:
         translated = GoogleTranslator(source='auto', target='en').translate(title)
         return lang, translated
@@ -241,29 +392,184 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def process_titles_parallel(df):
+def titles_parallel_translate(df, max_workers):
+    """
+    Cleans and processes video titles in parallel using thread-based execution. Fill and cleans missing video titles. 
+    Detects the language and translates each cleaned title .
+
+    Args:
+        df (pd.DataFrame): DataFrame containing a 'video_title' column.
+        max_workers (int): Maximum number of threads to use for language detection and translation.
+
+    Returns:
+        pd.DataFrame: The original DataFrame with two additional columns for language and translation.
+    """
+
     titles = df['video_title'].fillna('').astype(str).tolist()
-    
+
     with ThreadPoolExecutor() as executor:
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
     languages = []
     translations = []
-    
-    with ThreadPoolExecutor() as executor:
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(detect_and_translate, title) for title in clean_titles]
         for future in tqdm(futures, desc="Processing video title"):
             lang, translated = future.result()
             languages.append(lang)
             translations.append(translated)
-    
+
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
+
     return df
 
 # ---------------------------------------------
 
+def one_hot_encoding(df):
+    """
+    This function performs one-hot encoding on the 'video_title_language' column of a given DataFrame.
+
+    The function uses scikit-learn's `OneHotEncoder` to convert the categorical language data in the 'video_title_language'
+    column into a format suitable for machine learning models. Each unique language is represented as a separate binary feature.
+    The encoded DataFrame contains columns for each language, with 1 indicating the presence of that language and 0 otherwise.
+    
+    Args:
+    - df (DataFrame): The input DataFrame containing a column 'video_title_language' with categorical language data.
+    
+    Returns:
+    - df_language (DataFrame): A new DataFrame containing the one-hot encoded language features.
+    - encoder (OneHotEncoder): The fitted OneHotEncoder object used to perform the encoding.
+    """
+
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    language_encoded = encoder.fit_transform(df[['video_title_language']])
+    df_language = pd.DataFrame(language_encoded, columns=encoder.get_feature_names_out(['video_title_language']), index=df.index)
+    
+    return df_language, encoder
+
+# ---------------------------------------------
+
+def tfidf_vectorization(df, max_features=500):
+    """
+    This function performs TF-IDF vectorization on the 'video_title' column of the input DataFrame.
+    It cleans the titles using the `clean_title` function and then applies TF-IDF transformation 
+    to extract the most important features from the text data.
+
+    Args:
+    df (pd.DataFrame): The input DataFrame containing a column 'video_title' with text data.
+    max_features (int, optional): The maximum number of features (words) to extract using TF-IDF. Default is 500.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the TF-IDF features as columns, with the same index as the input DataFrame.
+    TfidfVectorizer: The fitted TF-IDF vectorizer used to transform the data.
+    """
+
+    vectorizer = TfidfVectorizer(max_features=max_features)
+    X_tfidf = vectorizer.fit_transform(df['video_title'].astype(str).apply(clean_title))
+    tfidf_df = pd.DataFrame(X_tfidf.toarray(), columns=vectorizer.get_feature_names_out(), index=df.index)
+    
+    return tfidf_df, vectorizer
+
+# ---------------------------------------------
+
+def titles_parallel_vectorize(df, max_workers, max_features=500):
+    """
+    This function performs parallel processing to clean and vectorize the titles in the given DataFrame.
+    It uses `ThreadPoolExecutor` to execute two tasks concurrently: 
+    1. TF-IDF vectorization of the video titles.
+    2. One-hot encoding of the video language.
+
+    Args:
+    - df (pandas.DataFrame): The input DataFrame containing the video titles and language information.
+    - max_features (int): The maximum number of features to extract during TF-IDF vectorization (default is 500).
+
+    Returns:
+    - df (pandas.DataFrame): The original DataFrame with the TF-IDF features and one-hot encoded language columns added,
+                              and the 'video_title' column removed.
+    """
+
+    if 'video_title_language' not in df.columns:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(detect_language, title): idx
+                for idx, title in df['video_title'].items()
+            }
+
+            languages = {}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Detecting languages"):
+                idx = futures[future]
+                try:
+                    languages[idx] = future.result()
+                except Exception as e:
+                    languages[idx] = 'unknown'
+            
+            df['video_title_language'] = df.index.map(languages)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(tfidf_vectorization, df, max_features): 'tfidf_vectorization',
+            executor.submit(one_hot_encoding, df): 'one_hot_encoding'
+        }
+
+        results = {}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Vectorizing titles"):
+            task_name = futures[future]
+            results[task_name] = future.result()
+
+    tfidf_df, vectorizer = results['tfidf_vectorization'] 
+    lang_df, encoder = results['one_hot_encoding'] 
+
+    df = pd.concat([df, tfidf_df, lang_df], axis=1)
+
+    return df
+
+# ---------------------------------------------
+
+def create_retry_session():
+    """
+    Creates and returns a requests Session object with automatic retry logic.
+
+    The session is configured to retry failed HTTP requests up to 3 times 
+    with an exponential backoff (1s, 2s, 4s) for specific server error codes 
+    (500, 502, 503, 504). This helps improve reliability when dealing with 
+    temporary server issues or intermittent network errors.
+    
+    Returns:
+        requests.Session: A session object with retry capabilities.
+    """
+
+    session = requests.Session()
+    retries = Retry(
+        total=2,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        raise_on_status=False
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+# ---------------------------------------------
+
 def detect_thumbnail(thumbnail_url, idx, class_names, model, pbar):
+    """
+    Detects objects in a thumbnail image using a pre-trained model.
+
+    Args:
+    - thumbnail_url (str): The URL of the thumbnail image to be processed.
+    - idx (int): The index of the current thumbnail, used for tracking.
+    - class_names (list): A list of class names for the object detection model.
+    - model (torch.nn.Module): The pre-trained object detection model.
+    - pbar (tqdm): A progress bar object for tracking the progress of the detection process.
+
+    Returns:
+    - idx (int): The index of the current thumbnail.
+    - detections (numpy.ndarray): A binary array indicating the presence of detected classes (1 for detected, 0 for not detected).
+    """
+
     results = model(thumbnail_url)
     class_ids = results.xyxy[0][:, 5].int().tolist()
     detections = np.zeros(len(class_names), dtype=int)
@@ -276,7 +582,26 @@ def detect_thumbnail(thumbnail_url, idx, class_names, model, pbar):
 
 # ---------------------------------------------
 
-def  thumbnail_parallel_detect(df, size):
+def  thumbnail_parallel_detect(df, size, max_workers, threshold = 0.1):
+    """
+    Detects objects in the thumbnails of YouTube videos using a YOLOv5 model, with parallel processing.
+
+    Args:
+    df (DataFrame): A DataFrame containing video information, including a column 'video_default_thumbnail' with the URLs of the thumbnails.
+    size (str): Specifies the size of the YOLOv5 model to be used. Options are:
+                - "n": YOLOv5 Nano
+                - "s": YOLOv5 Small
+                - "m": YOLOv5 Medium
+                - "l": YOLOv5 Large
+                - "x": YOLOv5 Extra Large
+    max_workers (int): The maximum number of parallel workers to use for processing the thumbnails.
+    threshold (float): The detection threshold to filter out detections with a low probability. The default value is 0.1.
+
+    Returns:
+    DataFrame: A modified version of the input `df` with additional columns for object detections in the thumbnails.
+                Each detection column corresponds to a specific object class detected in the thumbnail.
+    """
+
     thumbnail_urls = df['video_default_thumbnail'].values
 
     match size:
@@ -295,7 +620,7 @@ def  thumbnail_parallel_detect(df, size):
     detections_array = np.zeros((len(thumbnail_urls), len(class_names)), dtype=int)
     
     with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails class") as pbar:
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(detect_thumbnail, thumbnail_url, idx, class_names, model, pbar)
                 for idx, thumbnail_url in enumerate(thumbnail_urls)
@@ -305,67 +630,147 @@ def  thumbnail_parallel_detect(df, size):
                 detections_array[idx] = detections
     
     detections_df = pd.DataFrame(detections_array, columns=class_names)
-    detections_df['video_default_thumbnail'] = df['video_default_thumbnail'].values
-    detections_df = detections_df.loc[:, (detections_df != detections_df.iloc[0]).any()]
-    df = pd.concat([df, detections_df.iloc[:, :-1]], axis=1)
+    detections_df['video_default_thumbnail'] = df['video_default_thumbnail'].values 
+    detections_df = detections_df.iloc[:, :-1]
+    df = pd.concat([df, detections_df], axis=1)
 
     return df
 
 # ---------------------------------------------
 
 def thumbnail_stats(thumbnail_url, idx, pbar):
-    response = requests.get(thumbnail_url, timeout=10)
-    img = Image.open(BytesIO(response.content)).convert('RGB')
-    stat = ImageStat.Stat(img)
+    """
+    This function computes the brightness, contrast, and saturation of a thumbnail image 
+    given its URL. It fetches the image, calculates the required statistics, and returns 
+    the results.
 
-    brightness = sum(stat.mean) / 3
-    contrast = sum(stat.stddev) / 3
-    hsv = np.array(img.convert('HSV'))
-    saturation = hsv[:, :, 1].mean() / 255
+    Args:
+    thumbnail_url (str): The URL of the thumbnail image.
+    idx (int): The index or identifier for the image, used for tracking purposes.
+    pbar (tqdm): A progress bar object used to update progress during processing.
 
-    pbar.update(1)
-    return idx, [brightness, contrast, saturation]
+    Returns:
+    tuple: A tuple containing the index (idx) and a list of three values:
+           - Brightness (float): The average brightness of the image.
+           - Contrast (float): The average contrast of the image.
+           - Saturation (float): The average saturation of the image (normalized between 0 and 1).
+           If an error occurs (e.g., image fetch fails), the function returns NaN values for all three stats.
+    """
+
+    try:
+        response = requests.get(thumbnail_url, timeout=10)
+        img = Image.open(BytesIO(response.content)).convert('RGB')
+        stat = ImageStat.Stat(img)
+
+        brightness = sum(stat.mean) / 3
+        contrast = sum(stat.stddev) / 3
+        hsv = np.array(img.convert('HSV'))
+        saturation = hsv[:, :, 1].mean() / 255
+
+        pbar.update(1)
+        return idx, [brightness, contrast, saturation]
+    except Exception as e:
+        pbar.update(1)
+
+        return idx, [np.nan, np.nan, np.nan]
 
 # ---------------------------------------------
 
-def thumbnails_parallel_stats(df):
-    thumbnail_urls = df['video_default_thumbnail'].values
-    stats_array = np.zeros((len(thumbnail_urls), 3), dtype=float)
+def thumbnails_parallel_stats(df, max_workers):
+    """
+    Computes the brightness, contrast, and saturation statistics for each thumbnail in the provided DataFrame.  The statistics 
+    are calculated in parallel using a ThreadPoolExecutor for faster processing. A MinMax scaling is applied to the computed 
+    statistics for further normalization
 
-    with tqdm(total=len(thumbnail_urls), desc="Processing thumbnails stats") as pbar:
-        with ThreadPoolExecutor() as executor:
+    Args:
+    df (pd.DataFrame): The input DataFrame that contains the URLs of the video thumbnails in the column 'video_default_thumbnail'.
+    max_workers (int): The maximum number of worker threads to use for parallel processing.
+
+    Returns:
+    pd.DataFrame: The original DataFrame with three additional columns for thumbnail statistics:
+                  - 'thumbnail_brightness': The brightness statistic of each thumbnail.
+                  - 'thumbnail_contrast': The contrast statistic of each thumbnail.
+                  - 'thumbnail_saturation': The saturation statistic of each thumbnail.
+                  
+    Note:
+    - The input DataFrame must contain a column named 'video_default_thumbnail' with the URLs of the thumbnails.
+    - The `thumbnail_stats` function is expected to calculate the actual brightness, contrast, and saturation statistics for each image.
+    """
+
+    urls = df['video_default_thumbnail'].values
+    stats_array = np.zeros((len(urls), 3), dtype=float)
+
+    with tqdm(total=len(urls), desc="Computing thumbnail stats") as pbar:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
-                executor.submit(thumbnail_stats, thumbnail_url, idx, pbar) 
-                for idx, thumbnail_url in enumerate(thumbnail_urls)
+                executor.submit(thumbnail_stats, url, idx, pbar)
+                for idx, url in enumerate(urls)
             ]
             for future in futures:
                 idx, stats = future.result()
                 stats_array[idx] = stats
 
-    stats_df = pd.DataFrame(stats_array, columns=['brightness', 'contrast', 'saturation'])
-    stats_df['video_default_thumbnail'] = thumbnail_urls
-    df = pd.concat([df, stats_df.iloc[:, :-1]], axis=1)
+    df_stats = pd.DataFrame(stats_array)
+    scaler = MinMaxScaler()
+    df_stats_scaled = pd.DataFrame(scaler.fit_transform(df_stats), columns=["thumbnail_brightness", "thumbnail_contrast", "thumbnail_saturation"])
+    df = pd.concat([df, df_stats_scaled], axis=1)
+
     return df
 
 # ---------------------------------------------
 
 def embedding_thumbnail(thumbnail_url, idx, transform, model, pbar):
+    """
+    This function processes a thumbnail image from a given URL, extracts its features using a pre-trained model,
+    and returns the index of the image along with the extracted feature vector.
+
+    Args:
+    - thumbnail_url (str): The URL of the thumbnail image to process.
+    - idx (int): The index of the current image in the dataset (used for tracking).
+    - transform (callable): A transformation function that prepares the image for model input (e.g., resizing, normalization).
+    - model (torch.nn.Module): A pre-trained model to extract features from the image (e.g., a CNN model).
+    - pbar (tqdm object): A progress bar object to update during processing.
+
+    Returns:
+    - idx (int): The index of the image.
+    - features (numpy.ndarray): The feature vector extracted from the image.
+    
+    Note:
+    If an error occurs while processing the image, a feature vector of NaN values is returned instead.
+    """
+
     try:
-        response = requests.get(thumbnail_url, timeout=5)
+        response = requests.get(thumbnail_url, timeout=10)
         img = Image.open(BytesIO(response.content)).convert('RGB')
         img = transform(img).unsqueeze(0).to(device)  
         with torch.no_grad():
             features = model.features(img)
             features = features.mean([2, 3]).squeeze().cpu().numpy() 
     except Exception as e:
-        print(f"Error procesando {thumbnail_url}: {e}")
         features = np.full((1280,), np.nan) 
     pbar.update(1)
+    
     return idx, features
 
 # ---------------------------------------------
 
-def thumbnail_parallel_embeddings(df):
+def thumbnail_parallel_embeddings(df, max_workers, max_components = 40):
+    """
+    This function extracts embeddings from the thumbnails of videos in the given dataframe. It uses a pre-trained 
+    MobileNetV2 model to generate embeddings for each thumbnail URL. The embeddings are then reduced using PCA to 
+    retain the most important features, making them suitable for further analysis.
+
+    Args:
+    df (pd.DataFrame): DataFrame containing a column 'video_default_thumbnail' with URLs to video thumbnails.
+    max_workers (int): Maximum number of workers for parallel processing. 
+    max_components (int, optional): The maximum number of PCA components to retain for dimensionality reduction. 
+                                    Default is 40.
+
+    Returns:
+    pd.DataFrame: The original DataFrame with additional columns containing the reduced thumbnail embeddings.
+                  The embeddings are PCA-reduced versions of the original embeddings.
+    """
+
     thumbnail_urls = df['video_default_thumbnail'].values
     
     model = models.mobilenet_v2(pretrained=True)
@@ -383,7 +788,7 @@ def thumbnail_parallel_embeddings(df):
     embeddings_array = np.zeros((n_samples, embedding_dim), dtype=np.float32)
 
     with tqdm(total=n_samples, desc="Extracting thumbnails embeddings") as pbar:
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(embedding_thumbnail, url, idx, transform, model, pbar)
                 for idx, url in enumerate(thumbnail_urls)
@@ -391,26 +796,12 @@ def thumbnail_parallel_embeddings(df):
             for future in futures:
                 idx, embedding = future.result()
                 embeddings_array[idx] = embedding
-
-    pca_complete = PCA().fit(embeddings_array)
-    cumulative_variance = np.cumsum(pca_complete.explained_variance_ratio_)
-    n_components = np.searchsorted(cumulative_variance, 0.70) + 1 
-    n_components = min(n_components, 40)
-    pca = PCA(n_components=n_components)  
-    reduced_embeddings = pca.fit_transform(embeddings_array)
-
-    embed_cols = [f'thumb_emb_{i}' for i in range(reduced_embeddings.shape[1])]  
-    embeddings_df = pd.DataFrame(reduced_embeddings, columns=embed_cols)
-
-    return pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
-
-# ---------------------------------------------------------------------------------------------------------------------------    
-
-def final_process__dataset():
-    """ Final process of raw dataset. """
-    df = pd.read_csv(INTERIM_DATA_DIR / "dataset.csv")
-    print(df.head())
-
+    
+    embed_cols = [f'thumb_emb_{i}' for i in range(embeddings_array.shape[1])]  
+    embeddings_df = pd.DataFrame(embeddings_array, columns=embed_cols)
+    df = pd.concat([df.reset_index(drop=True), embeddings_df], axis=1)
+    
+    return df
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
