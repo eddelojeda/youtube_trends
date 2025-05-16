@@ -30,7 +30,6 @@ from torchvision import models, transforms
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 from dateutil.relativedelta import relativedelta
-from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -316,8 +315,14 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
         duration_secs = list(tqdm(executor.map(convert_duration, durations), total=len(durations), desc="Converting durations"))
     df['video_duration'] = duration_secs
 
-    df_train, df_temp = train_test_split(df, test_size=0.3, random_state=42)
-    df_val, df_test = train_test_split(df_temp, test_size=0.5, random_state=42)
+    df = df.sort_values(by='video_published_at')
+
+    train_end = int(len(df) * 0.7)
+    val_end = int(len(df) * 0.85)
+
+    df_train = df.iloc[:train_end]
+    df_val = df.iloc[train_end:val_end]
+    df_test = df.iloc[val_end:]
 
     df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
 
