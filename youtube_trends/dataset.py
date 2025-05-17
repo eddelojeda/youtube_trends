@@ -337,6 +337,9 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
 
     df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
 
+    if vectorize:
+        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers)
+
     if stats:
         columns_to_scale = ['thumbnail_brightness', 'thumbnail_contrast', 'thumbnail_saturation']
         stats_scaler = MinMaxScaler()    
@@ -351,8 +354,6 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df_val = df_val.dropna()
     df_test = df_test.dropna()
     
-    if vectorize:
-        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, max_workers)
     
     df_train = df_train.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
     df_val = df_val.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
@@ -419,7 +420,7 @@ def clean_title(title):
 
 # ---------------------------------------------
 
-def remove_stopwords(text):
+def remove_stopwords(text, stop_words):
     """
     Removes English stopwords from a string.
     
@@ -463,7 +464,7 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def titles_parallel_translate(df, max_workers):
+def titles_parallel_translate(df, stop_words, max_workers):
     """
     Cleans and processes video titles in parallel using thread-based execution. Fill and cleans missing video titles. 
     Detects the language and translates each cleaned title .
@@ -482,7 +483,7 @@ def titles_parallel_translate(df, max_workers):
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles), total=len(clean_titles), desc="Removing stopwords"))
+        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles, stop_words), total=len(clean_titles), desc="Removing stopwords"))
 
     languages, translations = [], []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -503,7 +504,7 @@ def titles_parallel_translate(df, max_workers):
 
 # ---------------------------------------------
 
-def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_features=500):
+def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers, max_features=100):
     """
     Cleans, detects language, translates, vectorizes, and encodes video titles in the provided training, validation, and test DataFrames.
 
@@ -512,7 +513,7 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
         df_val (pd.DataFrame): Validation set with a 'video_title' column.
         df_test (pd.DataFrame): Test set with a 'video_title' column.
         max_workers (int): Number of threads to use for parallel processing.
-        max_features (int): Maximum number of features for TF-IDF vectorization (default: 500).
+        max_features (int): Maximum number of features for TF-IDF vectorization (default: 100).
 
     Returns:
         Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, TfidfVectorizer, OneHotEncoder]:
@@ -521,7 +522,7 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
             - The fitted one-hot encoder
     """
 
-    df_train = titles_parallel_translate(df_train, max_workers)
+    df_train = titles_parallel_translate(df_train, stop_words, max_workers)
     df_val = titles_parallel_translate(df_val, max_workers)
     df_test = titles_parallel_translate(df_test, max_workers)
 
