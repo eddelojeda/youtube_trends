@@ -343,9 +343,11 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     if vectorize:
         df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, max_workers)
     
-    df_train = df_train.drop(['video_title', 'video_title_language'], axis=1)
-    df_val = df_val.drop(['video_title', 'video_title_language'], axis=1)
-    df_test = df_test.drop(['video_title', 'video_title_language'], axis=1)
+    df_train = df_train.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
+    df_val = df_val.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
+    df_test = df_test.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
+
+    df_train, df_val, df_test, language_pca = reduce_language_pca(df_train, df_val, df_test)
 
     df_train, df_val, df_test, category_encoder, category_pca = process_video_category(df_train, df_val, df_test)
 
@@ -353,13 +355,13 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df_val.to_csv(PROCESSED_DATA_DIR / 'val_dataset.csv', index=False)
     df_test.to_csv(PROCESSED_DATA_DIR / 'test_dataset.csv', index=False)    
 
-
     joblib.dump(stats_scaler, MODELS_DIR / 'stats_scaler.pkl')
     joblib.dump(title_vectorizer, MODELS_DIR / 'title_vectorizer.pkl')
     joblib.dump(title_encoder, MODELS_DIR / 'title_encoder.pkl')    
     joblib.dump(category_encoder, MODELS_DIR / 'category_encoder.pkl')    
     joblib.dump(category_pca, MODELS_DIR / 'category_pca.pkl')
-    joblib.dump(thumbnail_pca, MODELS_DIR / 'thumbnail_pca.pkl')    
+    joblib.dump(thumbnail_pca, MODELS_DIR / 'thumbnail_pca.pkl')
+    joblib.dump(language_pca, MODELS_DIR / 'language_pca.pkl')    
 
 # ---------------------------------------------
 
@@ -520,7 +522,59 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
 
 # ---------------------------------------------
 
-def process_video_category(df_train, df_val, df_test, threshold=0.1, use_pca=True, pca_variance_target=0.7, pca_max_components=10):
+def reduce_language_pca(df_train, df_val, df_test, pca_variance_target=0.7, pca_max_components=10):
+    """
+    Applies PCA to reduce the dimensionality of video_title_language_ .
+
+    Args:
+        df_train (pd.DataFrame): Training set with language (columns starting with 'video_title_language_').
+        df_val (pd.DataFrame): Validation set.
+        df_test (pd.DataFrame): Test set.
+        pca_variance_target (float, optional): Target cumulative explained variance for PCA. Default is 0.7.
+        pca_max_components (int, optional): Maximum number of PCA components to retain. Default is 10.
+
+    Returns:
+        tuple:
+            - df_train (pd.DataFrame): Train set with PCA-reduced.
+            - df_val (pd.DataFrame): Val set with PCA-reduced.
+            - df_test (pd.DataFrame): Test set with PCA-reduced.
+            - pca (PCA): The fitted PCA model.
+    """
+
+    lang_cols = [col for col in df_train.columns if str(col).startswith('video_title_language_')]
+
+    df_train = df_train.dropna(subset=lang_cols)
+    df_val = df_val.dropna(subset=lang_cols)
+    df_test = df_test.dropna(subset=lang_cols)
+
+    X_train = df_train[lang_cols].values
+    X_val = df_val[lang_cols].values
+    X_test = df_test[lang_cols].values
+
+    cumulative = np.cumsum(PCA().fit(X_train).explained_variance_ratio_)
+    n_components = np.argmax(cumulative >= pca_variance_target) + 1
+    n_components = min(pca_max_components, n_components)
+
+    pca = PCA(n_components=n_components)
+    X_train_pca = pca.fit_transform(X_train)
+    X_val_pca = pca.transform(X_val)
+    X_test_pca = pca.transform(X_test)
+
+    pca_cols = [f'lang_pca_{i}' for i in range(n_components)]
+
+    df_train_pca = pd.DataFrame(X_train_pca, columns=pca_cols, index=df_train.index)
+    df_val_pca = pd.DataFrame(X_val_pca, columns=pca_cols, index=df_val.index)
+    df_test_pca = pd.DataFrame(X_test_pca, columns=pca_cols, index=df_test.index)
+
+    df_train = pd.concat([df_train.drop(columns=lang_cols), df_train_pca], axis=1)
+    df_val = pd.concat([df_val.drop(columns=lang_cols), df_val_pca], axis=1)
+    df_test = pd.concat([df_test.drop(columns=lang_cols), df_test_pca], axis=1)
+
+    return df_train, df_val, df_test, pca
+
+# ---------------------------------------------
+
+def process_video_category(df_train, df_val, df_test, threshold=0.1, use_pca=True, pca_variance_target=0.7, pca_max_components=20):
     """
     Processes the 'video_category_id' categorical feature by applying one-hot encoding, filtering infrequent categories, and optionally reducing dimensionality using PCA.
 
@@ -531,7 +585,7 @@ def process_video_category(df_train, df_val, df_test, threshold=0.1, use_pca=Tru
         threshold (float, optional): Filters dummy columns whose mean frequency in training is < threshold or > 1 - threshold. Defaults to 0.1.
         use_pca (bool, optional): Whether to apply PCA to the encoded category columns. Defaults to True.
         pca_variance_target (float, optional): Minimum cumulative explained variance to retain in PCA. Defaults to 0.7.
-        pca_max_components (int, optional): Maximum number of PCA components to retain. Defaults to 40.
+        pca_max_components (int, optional): Maximum number of PCA components to retain. Defaults to 20.
 
     Returns:
         tuple:
@@ -857,7 +911,7 @@ def thumbnail_parallel_embeddings(df, max_workers):
 
 # ---------------------------------------------
 
-def reduce_thumbnail_embeddings_pca(df_train, df_val, df_test, pca_variance_target=0.7, pca_max_components=40):
+def reduce_thumbnail_embeddings_pca(df_train, df_val, df_test, pca_variance_target=0.7, pca_max_components=100):
     """
     Applies PCA to reduce the dimensionality of thumbnail embeddings.
 
