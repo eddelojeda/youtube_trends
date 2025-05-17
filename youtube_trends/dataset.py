@@ -82,14 +82,19 @@ def main(
     # -----------------------------------------
     # Creation of processed dataset
     # -----------------------------------------    
-    if not os.path.exists(RAW_DATA_DIR / "dataset.csv"):
+    if not os.path.exists(input_path):
         print("No dataset available")
     else:
         if not os.path.exists(PROCESSED_DATA_DIR):
             os.makedirs(PROCESSED_DATA_DIR)
             logger.info(f"New folder: {PROCESSED_DATA_DIR}")
-        elif inter_path.exists():
-            inter_path.unlink()
+        else:
+            if output_train_path.exists():
+                output_train_path.unlink()
+            if output_val_path.exists():
+                output_val_path.unlink()
+            if output_test_path.exists():
+                output_test_path.unlink()
         process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -335,7 +340,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
 
     if vectorize:
-        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers)
+        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, max_workers)
 
     if stats:
         columns_to_scale = ['thumbnail_brightness', 'thumbnail_contrast', 'thumbnail_saturation']
@@ -446,7 +451,7 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def titles_parallel_translate(df, stop_words, max_workers):
+def titles_parallel_translate(df, max_workers):
     """
     Cleans and processes video titles in parallel using thread-based execution. Fill and cleans missing video titles. 
     Detects the language and translates each cleaned title .
@@ -483,7 +488,7 @@ def titles_parallel_translate(df, stop_words, max_workers):
 
 # ---------------------------------------------
 
-def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers, max_features=100):
+def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_features=100):
     """
     Cleans, detects language, translates, vectorizes, and encodes video titles in the provided training, validation, and test DataFrames.
 
