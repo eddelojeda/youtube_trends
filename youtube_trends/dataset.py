@@ -1,9 +1,11 @@
 import os
 import re
+import nltk
 import time
 import emoji
 import torch
 import typer
+import string
 import joblib
 import random
 import shutil
@@ -22,9 +24,12 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog
 from PIL import Image, ImageStat
+from nltk.corpus import stopwords
 from ttkbootstrap.constants import *
 from urllib3.util.retry import Retry
 from sklearn.decomposition import PCA
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
 from requests.adapters import HTTPAdapter
 from torchvision import models, transforms
 from deep_translator import GoogleTranslator
@@ -58,6 +63,7 @@ def main(
     embed: bool = typer.Option(False, "--embed", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
+    days: int = typer.Option(0, "--days", help="Number of days to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
     threads: int = typer.Option(0, "--threads", help="Number of threads used for parallel data processing. Default value: 0 (Automatic selection based on number of processors)."),
 ):
     if size not in {"n", "s", "m", "l", "x"}:
@@ -85,7 +91,7 @@ def main(
             logger.info(f"New folder: {PROCESSED_DATA_DIR}")
         elif inter_path.exists():
             inter_path.unlink()
-        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads)
+        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -206,7 +212,7 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads, threshold = 0.1):
+def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads, threshold = 0.1):
     """
     Processes the raw YouTube trending dataset by performing extensive cleaning, feature engineering, and optional image and text 
     feature extraction, followed by dataset splitting and saving.
@@ -240,6 +246,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
         embed (bool): Whether to extract MobileNetV2 embeddings from thumbnails.
         size (str): YOLO model size used for object detection ('n', 's', 'm', 'l', 'x').
         weeks (int): Number of recent weeks of data to keep. If -1, keeps only data from the day before the latest video.
+        days (int): Number of recent days of data to keep. If -1, keeps only data from the day before the latest video.
         threads (int): Number of threads for parallel processing. If 0, uses all available cores.
         threshold (float, optional): Prevalence threshold to filter one-hot encoded `video_category_id` columns. Default is 0.1.
 
@@ -269,11 +276,11 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df = df.drop_duplicates()
 
     df = df.sort_values(by='video_published_at', ascending=False)
-    if weeks == -1:
-        start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
-        df = df[df['video_published_at'] >= start_date]
-    elif weeks > 0:
+    if weeks > 0:
         start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
+        df = df[df['video_published_at'] >= start_date]
+    elif days > 0:  
+        start_date = df['video_published_at'].iloc[0] - relativedelta(days=days)
         df = df[df['video_published_at'] >= start_date]
     df.reset_index(drop=True, inplace=True)
 
@@ -293,6 +300,8 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df = df.dropna()
 
     session = create_retry_session()
+    nltk.download('stopwords')
+    stop_words = set(stopwords.words('english'))
 
     if threads == 0:
         max_workers = None
@@ -410,6 +419,21 @@ def clean_title(title):
 
 # ---------------------------------------------
 
+def remove_stopwords(text):
+    """
+    Removes English stopwords from a string.
+    
+    Args:
+    - text (str): Input text.
+    
+    Returns:
+    - str: Text without stopwords.
+    """
+    
+    return ' '.join([word for word in text.split() if word not in stop_words])
+
+# ---------------------------------------------
+
 def detect_and_translate(title):
     """
     Detects the language of a given text and translates it to English if it's not already in English.
@@ -457,18 +481,24 @@ def titles_parallel_translate(df, max_workers):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles), total=len(clean_titles), desc="Removing stopwords"))
+
     languages, translations = [], []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = executor.map(detect_and_translate, clean_titles)
-        for lang, translated in tqdm(futures, total=len(clean_titles), desc="Detecting & translating"):
+        futures = executor.map(detect_and_translate, clean_titles_nostop)
+        for lang, translated in tqdm(futures, total=len(clean_titles_nostop), desc="Detecting & translating"):
             languages.append(lang)
             translations.append(translated)
 
     df = df.copy()
-    df['video_title_clean'] = clean_titles
+    df['video_title_clean'] = clean_titles_nostop
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
-    
+
+    mask_failed_translation = (df['video_title_language'] != 'en') & (df['video_title_translated'] == df['video_title_clean'])
+    df = df.loc[~mask_failed_translation].reset_index(drop=True)
+
     return df
 
 # ---------------------------------------------
