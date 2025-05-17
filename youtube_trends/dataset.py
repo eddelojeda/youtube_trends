@@ -266,6 +266,8 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df['video_published_at'] = pd.to_datetime(df['video_published_at'], errors='coerce').dt.tz_localize(None)
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
 
+    df = df.drop_duplicates()
+
     df = df.sort_values(by='video_published_at', ascending=False)
     if weeks == -1:
         start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
@@ -350,6 +352,10 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df_train, df_val, df_test, language_pca = reduce_language_pca(df_train, df_val, df_test)
 
     df_train, df_val, df_test, category_encoder, category_pca = process_video_category(df_train, df_val, df_test)
+
+    df_train.reset_index(drop=True, inplace=True)
+    df_val.reset_index(drop=True, inplace=True)
+    df_test.reset_index(drop=True, inplace=True)
 
     df_train.to_csv(PROCESSED_DATA_DIR / 'train_dataset.csv', index=False)
     df_val.to_csv(PROCESSED_DATA_DIR / 'val_dataset.csv', index=False)
