@@ -51,8 +51,9 @@ def main(
     # Default paths and parameters
     # -----------------------------------------
     input_path: Path = RAW_DATA_DIR / "dataset.csv",
-    inter_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
-    output_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
+    output_train_path: Path = PROCESSED_DATA_DIR / "train_dataset.csv",
+    output_val_path: Path = PROCESSED_DATA_DIR / "val_dataset.csv",
+    output_test_path: Path = PROCESSED_DATA_DIR / "test_dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
     vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False."),
     translate: bool = typer.Option(False, "--translate", "-t", help="translate the video titles to english. Default value: False."),
