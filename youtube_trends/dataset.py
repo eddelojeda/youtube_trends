@@ -1,6 +1,5 @@
 import os
 import re
-import nltk
 import time
 import emoji
 import torch
@@ -24,7 +23,6 @@ from pathlib import Path
 from loguru import logger
 from tkinter import filedialog
 from PIL import Image, ImageStat
-from nltk.corpus import stopwords
 from ttkbootstrap.constants import *
 from urllib3.util.retry import Retry
 from sklearn.decomposition import PCA
@@ -236,7 +234,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     - Optionally reduces video category encoding dimensionality using PCA.
     - Drops unnecessary columns and missing data.
     - Saves the processed train/val/test datasets as CSV files.
-    - Saves all fitted transformers (scalers, encoders, PCA models) as `.pkl` files.
+    - Saves all fitted transformers (scalers, encoders, vectorizer, PCA models) as `.pkl` files.
 
     Args:
         vectorize (bool): Whether to apply TF-IDF vectorization and language encoding on video titles.
@@ -300,8 +298,6 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df = df.dropna()
 
     session = create_retry_session()
-    nltk.download('stopwords')
-    stop_words = set(stopwords.words('english'))
 
     if threads == 0:
         max_workers = None
@@ -414,24 +410,9 @@ def clean_title(title):
     title = emoji.replace_emoji(title, replace='')
     title = re.sub(r'http\S+|www\S+|https\S+', '', title)
     title = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-    title = re.sub(r'\s+', ' ', title).strip() 
+    title = re.sub(r'\s+', ' ', title).strip()
 
     return title
-
-# ---------------------------------------------
-
-def remove_stopwords(text, stop_words):
-    """
-    Removes English stopwords from a string.
-    
-    Args:
-    - text (str): Input text.
-    
-    Returns:
-    - str: Text without stopwords.
-    """
-    
-    return ' '.join([word for word in text.split() if word not in stop_words])
 
 # ---------------------------------------------
 
@@ -482,18 +463,15 @@ def titles_parallel_translate(df, stop_words, max_workers):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles, [stop_words] * len(clean_titles)), total=len(clean_titles), desc="Removing stopwords"))
-
     languages, translations = [], []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = executor.map(detect_and_translate, clean_titles_nostop)
-        for lang, translated in tqdm(futures, total=len(clean_titles_nostop), desc="Detecting & translating"):
+        futures = executor.map(detect_and_translate, clean_titles)
+        for lang, translated in tqdm(futures, total=len(clean_titles), desc="Detecting & translating"):
             languages.append(lang)
             translations.append(translated)
 
     df = df.copy()
-    df['video_title_clean'] = clean_titles_nostop
+    df['video_title_clean'] = clean_titles
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
 
@@ -522,18 +500,26 @@ def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers
             - The fitted one-hot encoder
     """
 
-    df_train = titles_parallel_translate(df_train, stop_words, max_workers)
-    df_val = titles_parallel_translate(df_val, stop_words, max_workers)
-    df_test = titles_parallel_translate(df_test, stop_words, max_workers)
+    df_train = titles_parallel_translate(df_train, max_workers)
+    df_val = titles_parallel_translate(df_val, max_workers)
+    df_test = titles_parallel_translate(df_test, max_workers)
 
-    vectorizer = TfidfVectorizer(max_features=max_features)
-    
+    vectorizer = TfidfVectorizer(
+        max_features=max_features,
+        stop_words='english',
+        ngram_range=(1, 2),
+        sublinear_tf=True,
+        max_df=0.8,
+        min_df=2,
+        norm='l2'
+    )
+
     train_tfidf = vectorizer.fit_transform(df_train['video_title_translated'])
     val_tfidf = vectorizer.transform(df_val['video_title_translated'])
     test_tfidf = vectorizer.transform(df_test['video_title_translated'])
 
     tfidf_cols = vectorizer.get_feature_names_out()
-    
+
     df_train_tfidf = pd.DataFrame(train_tfidf.toarray(), columns=tfidf_cols, index=df_train.index)
     df_val_tfidf = pd.DataFrame(val_tfidf.toarray(), columns=tfidf_cols, index=df_val.index)
     df_test_tfidf = pd.DataFrame(test_tfidf.toarray(), columns=tfidf_cols, index=df_test.index)
@@ -544,7 +530,7 @@ def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers
     train_encoded = encoder.fit_transform(df_train[lang_col])
     val_encoded = encoder.transform(df_val[lang_col])
     test_encoded = encoder.transform(df_test[lang_col])
-    
+
     encoded_cols = encoder.get_feature_names_out(lang_col)
 
     df_train_encoded = pd.DataFrame(train_encoded, columns=encoded_cols, index=df_train.index)
