@@ -140,7 +140,7 @@ List of commands available for the Makefile:
 * `make requirements`: Install the required libraries from the `requirements.txt` file.
 * `make process`: Processes the data in the `/data/raw` folder and saves the results to `/data/processed`.
 
-## ⚙️ How to use
+## ▶️ How to use
 
 To download and preprocess the data, you need to run the dataset.py script. This script supports several parameters to control the data processing pipeline. By default, the parameters are as follows:
 
@@ -169,15 +169,15 @@ python youtube_trends/dataset.py -r -v -t -d --s -e --size=n
 ```
 
 This will:
-- Download the raw dataset (if not already downloaded or if --redownload is set),
-- Vectorize and detect the language of video titles,
-- Translate titles to English,
-- Detect objects in thumbnails,
-- Compute thumbnail stats (brightness, contrast, saturation),
-- Extract thumbnail embeddings,
-- Use YOLOv5n model version to object detection in thumbnails,
-- Process the full dataset (no limits on weeks/days),
-- Automatically select number of threads for parallel processing.
+- ⬇️ Download the raw dataset (if not already downloaded or if --redownload is set),
+- 📝 Vectorize and detect the language of video titles,
+- 🔤 Translate titles to English,
+- 🔍 Detect objects in thumbnails,
+- 🎨 Compute thumbnail stats (brightness, contrast, saturation),
+- 🧠 Extract thumbnail embeddings,
+- 🔧 Select YOLOv5n model version to perform object detection in thumbnails,
+- 📅 Process the full dataset (no limits on weeks/days),
+- ⚙️ Automatically select number of threads for parallel processing.
 
 --------
 
