@@ -4,6 +4,7 @@ import time
 import emoji
 import torch
 import typer
+import string
 import joblib
 import random
 import shutil
@@ -25,6 +26,8 @@ from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
 from urllib3.util.retry import Retry
 from sklearn.decomposition import PCA
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
 from requests.adapters import HTTPAdapter
 from torchvision import models, transforms
 from deep_translator import GoogleTranslator
@@ -58,6 +61,7 @@ def main(
     embed: bool = typer.Option(False, "--embed", "-e", help="Extract embeddings from thumbnails. Default value: False."),
     size: str = typer.Option("n", "--size", help="Specify version of yolov5 to process the dataset (n, s, m, l, x).  Default value: n."),
     weeks: int = typer.Option(0, "--weeks", help="Number of weeks to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
+    days: int = typer.Option(0, "--days", help="Number of days to use from the raw dataset. Default value: 0 (Complete raw dataset)."),
     threads: int = typer.Option(0, "--threads", help="Number of threads used for parallel data processing. Default value: 0 (Automatic selection based on number of processors)."),
 ):
     if size not in {"n", "s", "m", "l", "x"}:
@@ -85,7 +89,7 @@ def main(
             logger.info(f"New folder: {PROCESSED_DATA_DIR}")
         elif inter_path.exists():
             inter_path.unlink()
-        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads)
+        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -206,7 +210,7 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, threads, threshold = 0.1):
+def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads, threshold = 0.1):
     """
     Processes the raw YouTube trending dataset by performing extensive cleaning, feature engineering, and optional image and text 
     feature extraction, followed by dataset splitting and saving.
@@ -230,7 +234,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     - Optionally reduces video category encoding dimensionality using PCA.
     - Drops unnecessary columns and missing data.
     - Saves the processed train/val/test datasets as CSV files.
-    - Saves all fitted transformers (scalers, encoders, PCA models) as `.pkl` files.
+    - Saves all fitted transformers (scalers, encoders, vectorizer, PCA models) as `.pkl` files.
 
     Args:
         vectorize (bool): Whether to apply TF-IDF vectorization and language encoding on video titles.
@@ -240,6 +244,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
         embed (bool): Whether to extract MobileNetV2 embeddings from thumbnails.
         size (str): YOLO model size used for object detection ('n', 's', 'm', 'l', 'x').
         weeks (int): Number of recent weeks of data to keep. If -1, keeps only data from the day before the latest video.
+        days (int): Number of recent days of data to keep. If -1, keeps only data from the day before the latest video.
         threads (int): Number of threads for parallel processing. If 0, uses all available cores.
         threshold (float, optional): Prevalence threshold to filter one-hot encoded `video_category_id` columns. Default is 0.1.
 
@@ -266,12 +271,14 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df['video_published_at'] = pd.to_datetime(df['video_published_at'], errors='coerce').dt.tz_localize(None)
     df['video_trending__date'] = pd.to_datetime(df['video_trending__date'], errors='coerce').dt.tz_localize(None)
 
+    df = df.drop_duplicates()
+
     df = df.sort_values(by='video_published_at', ascending=False)
-    if weeks == -1:
-        start_date = df['video_published_at'].iloc[0] - relativedelta(days=1)
-        df = df[df['video_published_at'] >= start_date]
-    elif weeks > 0:
+    if weeks > 0:
         start_date = df['video_published_at'].iloc[0] - relativedelta(weeks=weeks)
+        df = df[df['video_published_at'] >= start_date]
+    elif days > 0:  
+        start_date = df['video_published_at'].iloc[0] - relativedelta(days=days)
         df = df[df['video_published_at'] >= start_date]
     df.reset_index(drop=True, inplace=True)
 
@@ -326,6 +333,9 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
 
     df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
 
+    if vectorize:
+        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers)
+
     if stats:
         columns_to_scale = ['thumbnail_brightness', 'thumbnail_contrast', 'thumbnail_saturation']
         stats_scaler = MinMaxScaler()    
@@ -340,8 +350,6 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df_val = df_val.dropna()
     df_test = df_test.dropna()
     
-    if vectorize:
-        df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, max_workers)
     
     df_train = df_train.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
     df_val = df_val.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
@@ -350,6 +358,10 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, thr
     df_train, df_val, df_test, language_pca = reduce_language_pca(df_train, df_val, df_test)
 
     df_train, df_val, df_test, category_encoder, category_pca = process_video_category(df_train, df_val, df_test)
+
+    df_train.reset_index(drop=True, inplace=True)
+    df_val.reset_index(drop=True, inplace=True)
+    df_test.reset_index(drop=True, inplace=True)
 
     df_train.to_csv(PROCESSED_DATA_DIR / 'train_dataset.csv', index=False)
     df_val.to_csv(PROCESSED_DATA_DIR / 'val_dataset.csv', index=False)
@@ -398,7 +410,7 @@ def clean_title(title):
     title = emoji.replace_emoji(title, replace='')
     title = re.sub(r'http\S+|www\S+|https\S+', '', title)
     title = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-    title = re.sub(r'\s+', ' ', title).strip() 
+    title = re.sub(r'\s+', ' ', title).strip()
 
     return title
 
@@ -433,7 +445,7 @@ def detect_and_translate(title):
 
 # ---------------------------------------------
 
-def titles_parallel_translate(df, max_workers):
+def titles_parallel_translate(df, stop_words, max_workers):
     """
     Cleans and processes video titles in parallel using thread-based execution. Fill and cleans missing video titles. 
     Detects the language and translates each cleaned title .
@@ -462,12 +474,15 @@ def titles_parallel_translate(df, max_workers):
     df['video_title_clean'] = clean_titles
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
-    
+
+    mask_failed_translation = (df['video_title_language'] != 'en') & (df['video_title_translated'] == df['video_title_clean'])
+    df = df.loc[~mask_failed_translation].reset_index(drop=True)
+
     return df
 
 # ---------------------------------------------
 
-def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_features=500):
+def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers, max_features=100):
     """
     Cleans, detects language, translates, vectorizes, and encodes video titles in the provided training, validation, and test DataFrames.
 
@@ -476,7 +491,7 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
         df_val (pd.DataFrame): Validation set with a 'video_title' column.
         df_test (pd.DataFrame): Test set with a 'video_title' column.
         max_workers (int): Number of threads to use for parallel processing.
-        max_features (int): Maximum number of features for TF-IDF vectorization (default: 500).
+        max_features (int): Maximum number of features for TF-IDF vectorization (default: 100).
 
     Returns:
         Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, TfidfVectorizer, OneHotEncoder]:
@@ -489,14 +504,22 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
     df_val = titles_parallel_translate(df_val, max_workers)
     df_test = titles_parallel_translate(df_test, max_workers)
 
-    vectorizer = TfidfVectorizer(max_features=max_features)
-    
+    vectorizer = TfidfVectorizer(
+        max_features=max_features,
+        stop_words='english',
+        ngram_range=(1, 2),
+        sublinear_tf=True,
+        max_df=0.8,
+        min_df=2,
+        norm='l2'
+    )
+
     train_tfidf = vectorizer.fit_transform(df_train['video_title_translated'])
     val_tfidf = vectorizer.transform(df_val['video_title_translated'])
     test_tfidf = vectorizer.transform(df_test['video_title_translated'])
 
     tfidf_cols = vectorizer.get_feature_names_out()
-    
+
     df_train_tfidf = pd.DataFrame(train_tfidf.toarray(), columns=tfidf_cols, index=df_train.index)
     df_val_tfidf = pd.DataFrame(val_tfidf.toarray(), columns=tfidf_cols, index=df_val.index)
     df_test_tfidf = pd.DataFrame(test_tfidf.toarray(), columns=tfidf_cols, index=df_test.index)
@@ -507,7 +530,7 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
     train_encoded = encoder.fit_transform(df_train[lang_col])
     val_encoded = encoder.transform(df_val[lang_col])
     test_encoded = encoder.transform(df_test[lang_col])
-    
+
     encoded_cols = encoder.get_feature_names_out(lang_col)
 
     df_train_encoded = pd.DataFrame(train_encoded, columns=encoded_cols, index=df_train.index)
