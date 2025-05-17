@@ -483,7 +483,7 @@ def titles_parallel_translate(df, stop_words, max_workers):
         clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles, stop_words), total=len(clean_titles), desc="Removing stopwords"))
+        clean_titles_nostop = list(tqdm(executor.map(remove_stopwords, clean_titles, [stop_words] * len(clean_titles)), total=len(clean_titles), desc="Removing stopwords"))
 
     languages, translations = [], []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -523,8 +523,8 @@ def titles_parallel_vectorize(df_train, df_val, df_test, stop_words, max_workers
     """
 
     df_train = titles_parallel_translate(df_train, stop_words, max_workers)
-    df_val = titles_parallel_translate(df_val, max_workers)
-    df_test = titles_parallel_translate(df_test, max_workers)
+    df_val = titles_parallel_translate(df_val, stop_words, max_workers)
+    df_test = titles_parallel_translate(df_test, stop_words, max_workers)
 
     vectorizer = TfidfVectorizer(max_features=max_features)
     
