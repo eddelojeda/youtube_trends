@@ -1,5 +1,6 @@
 import os
 import re
+import nltk
 import time
 import emoji
 import torch
@@ -21,6 +22,7 @@ from tqdm import tqdm
 from io import BytesIO
 from pathlib import Path
 from loguru import logger
+from functools import partial
 from tkinter import filedialog
 from PIL import Image, ImageStat
 from ttkbootstrap.constants import *
@@ -33,6 +35,7 @@ from torchvision import models, transforms
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 from dateutil.relativedelta import relativedelta
+from nltk.sentiment import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -56,6 +59,7 @@ def main(
     output_test_path: Path = PROCESSED_DATA_DIR / "test_dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
     process: bool = typer.Option(False, "--process", "-p", help="Process raw dataset. Default value: False."),
+    analyze: bool = typer.Option(False, "--analyze", "-a", help="Perform sentiment analysis to the videos titles using VADER (NLTK). Default value: False."),
     vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False."),
     translate: bool = typer.Option(False, "--translate", "-t", help="translate the video titles to english. Default value: False."),
     detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail. Default value: False."),
@@ -97,7 +101,7 @@ def main(
                     output_val_path.unlink()
                 if output_test_path.exists():
                     output_test_path.unlink()
-            process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
+            process_dataset(analyze, vectorize, translate, detect, stats, embed, size, weeks, days, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
 
@@ -218,7 +222,7 @@ def open_file_dialog():
 
 # ---------------------------------------------------------------------------------------------------------------------------    
 
-def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads, threshold = 0.1):
+def process_dataset(analyze, vectorize, translate, detect, stats, embed, size, weeks, days, threads, threshold = 0.1):
     """
     Processes the raw YouTube trending dataset by performing extensive cleaning, feature engineering, and optional image and text 
     feature extraction, followed by dataset splitting and saving.
@@ -237,6 +241,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     - Optionally cleans, detects language, and translates video titles to English.
     - Splits the dataset into training (70%), validation (15%), and test (15%) sets.
     - Scales thumbnail image statistics using MinMaxScaler fitted on training data.
+    - Optionally performs sentiment analysis to video titles using transformers.
     - Optionally vectorizes titles using TF-IDF and encodes language using one-hot encoding.
     - Applies one-hot encoding to `video_category_id` and filters by prevalence threshold.
     - Optionally reduces video category encoding dimensionality using PCA.
@@ -245,6 +250,7 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     - Saves all fitted transformers (scalers, encoders, vectorizer, PCA models) as `.pkl` files.
 
     Args:
+        analyze (bool): Whether to apply sentiment_pipeline to video titles.
         vectorize (bool): Whether to apply TF-IDF vectorization and language encoding on video titles.
         translate (bool): Whether to clean, detect language, and translate titles to English.
         detect (bool): Whether to apply object detection to video thumbnails.
@@ -298,6 +304,19 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df['video_category_id'] = df['video_category_id'].str.replace(' ', '_')
 
     df['video_title_length'] = df['video_title'].str.split().str.len()
+
+    titles = df['video_title'].fillna('').astype(str).tolist()
+
+    if threads == 0:
+        max_workers = None
+    else:
+        max_workers = threads
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
+
+    df['clean_video_title'] = clean_titles
+
     df['video_tag_count'] = df['video_tags'].str.split('|').str.len()
     df['video_tag_count'] = df['video_tag_count'].fillna(0)
     df = df.drop(['video_trending__date', 'video_tags'], axis=1)
@@ -306,12 +325,12 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df = df.dropna()
 
     session = create_retry_session()
-
-    if threads == 0:
-        max_workers = None
-    else:
-        max_workers = threads
     
+    if analyze:
+        nltk.download('vader_lexicon')
+        sia = SentimentIntensityAnalyzer()
+        df = parallel_sentiment_analysis(df, sia, max_workers)
+
     if detect:
         df = thumbnail_parallel_detect(df, size, max_workers)
     
@@ -358,10 +377,9 @@ def process_dataset(vectorize, translate, detect, stats, embed, size, weeks, day
     df_val = df_val.dropna()
     df_test = df_test.dropna()
     
-    
-    df_train = df_train.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
-    df_val = df_val.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
-    df_test = df_test.drop(['video_title', 'video_title_language', 'video_title_clean', 'video_title_translated'], axis=1)
+    df_train = df_train.drop(['video_title', 'video_title_language', 'clean_video_title', 'video_title_translated'], axis=1)
+    df_val = df_val.drop(['video_title', 'video_title_language', 'clean_video_title', 'video_title_translated'], axis=1)
+    df_test = df_test.drop(['video_title', 'video_title_language', 'clean_video_title', 'video_title_translated'], axis=1)
 
     df_train, df_val, df_test, language_pca = reduce_language_pca(df_train, df_val, df_test)
 
@@ -466,10 +484,7 @@ def titles_parallel_translate(df, max_workers):
         pd.DataFrame: The original DataFrame with two additional columns for language and translation.
     """
 
-    titles = df['video_title'].fillna('').astype(str).tolist()
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        clean_titles = list(tqdm(executor.map(clean_title, titles), total=len(titles), desc="Cleaning titles"))
+    clean_titles = df['clean_video_title'].fillna('').astype(str).tolist()
 
     languages, translations = [], []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -479,11 +494,10 @@ def titles_parallel_translate(df, max_workers):
             translations.append(translated)
 
     df = df.copy()
-    df['video_title_clean'] = clean_titles
     df['video_title_language'] = languages
     df['video_title_translated'] = translations
 
-    mask_failed_translation = (df['video_title_language'] != 'en') & (df['video_title_translated'] == df['video_title_clean'])
+    mask_failed_translation = (df['video_title_language'] != 'en') & (df['video_title_translated'] == df['clean_video_title'])
     df = df.loc[~mask_failed_translation].reset_index(drop=True)
 
     return df
@@ -550,6 +564,60 @@ def titles_parallel_vectorize(df_train, df_val, df_test, max_workers, max_featur
     df_test = pd.concat([df_test.reset_index(drop=True), df_test_tfidf.reset_index(drop=True), df_test_encoded.reset_index(drop=True)], axis=1)
 
     return df_train, df_val, df_test, vectorizer, encoder
+
+# ---------------------------------------------
+
+def sentiment_analysis(title, sia):
+    """
+    Analyzes the sentiment of a given video title using VADER sentiment analyzer.
+
+    Args:
+        title (str): The input video title.
+
+    Returns:
+        tuple: A tuple (compound_score, sentiment_label) where:
+            - compound_score (float): The compound sentiment score in the range [-1.0, 1.0].
+            - sentiment_label (str): One of 'positive', 'neutral', or 'negative'.
+    """
+    
+    score = sia.polarity_scores(title)['compound']
+    label = 'positive' if score >= 0.05 else 'negative' if score <= -0.05 else 'neutral'
+    return score, label
+
+# ---------------------------------------------
+
+def parallel_sentiment_analysis(df, sia, max_workers):
+    """
+    Performs parallel sentiment analysis on the 'clean_video_title' column using ThreadPoolExecutor.
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'clean_video_title' column.
+        max_workers (int): Number of threads to use for parallel processing.
+
+    Returns:
+        pd.DataFrame: El DataFrame original con columnas nuevas:
+            - 'sentiment_score': puntaje compuesto de VADER.
+            - sentiment_label encoded columns ('sentiment_positive', 'sentiment_neutral', 'sentiment_negative').
+    """
+
+    clean_titles = df['clean_video_title'].fillna('').astype(str).tolist()
+    analysis_fn = partial(sentiment_analysis, sia=sia)
+
+    scores, labels = [], []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = executor.map(analysis_fn, clean_titles)
+        for score, label in tqdm(results, total=len(clean_titles), desc="Sentiment analysis"):
+            scores.append(score)
+            labels.append(label)
+
+    df = df.copy()
+    df['sentiment_score'] = scores
+    df['sentiment_label'] = labels
+
+    one_hot = pd.get_dummies(df['sentiment_label'], prefix='sentiment').astype(int)
+    df = pd.concat([df.drop(columns=['sentiment_label']), one_hot], axis=1)
+
+    return df 
 
 # ---------------------------------------------
 
