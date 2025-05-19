@@ -55,6 +55,7 @@ def main(
     output_val_path: Path = PROCESSED_DATA_DIR / "val_dataset.csv",
     output_test_path: Path = PROCESSED_DATA_DIR / "test_dataset.csv",
     redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False."),
+    process: bool = typer.Option(False, "--process", "-p", help="Process raw dataset. Default value: False."),
     vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False."),
     translate: bool = typer.Option(False, "--translate", "-t", help="translate the video titles to english. Default value: False."),
     detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail. Default value: False."),
@@ -82,20 +83,21 @@ def main(
     # -----------------------------------------
     # Creation of processed dataset
     # -----------------------------------------    
-    if not os.path.exists(input_path):
-        print("No dataset available")
-    else:
-        if not os.path.exists(PROCESSED_DATA_DIR):
-            os.makedirs(PROCESSED_DATA_DIR)
-            logger.info(f"New folder: {PROCESSED_DATA_DIR}")
+    if process:
+        if not os.path.exists(input_path):
+            print("No dataset available")
         else:
-            if output_train_path.exists():
-                output_train_path.unlink()
-            if output_val_path.exists():
-                output_val_path.unlink()
-            if output_test_path.exists():
-                output_test_path.unlink()
-        process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
+            if not os.path.exists(PROCESSED_DATA_DIR):
+                os.makedirs(PROCESSED_DATA_DIR)
+                logger.info(f"New folder: {PROCESSED_DATA_DIR}")
+            else:
+                if output_train_path.exists():
+                    output_train_path.unlink()
+                if output_val_path.exists():
+                    output_val_path.unlink()
+                if output_test_path.exists():
+                    output_test_path.unlink()
+            process_dataset(vectorize, translate, detect, stats, embed, size, weeks, days, threads)
         
 # ---------------------------------------------------------------------------------------------------------------------------
 
