@@ -358,7 +358,8 @@ def process_dataset(analyze, vectorize, translate, detect, stats, embed, size, w
     df_val = df.iloc[train_end:val_end]
     df_test = df.iloc[val_end:]
 
-    df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
+    if embed:
+        df_train, df_val, df_test, thumbnail_pca = reduce_thumbnail_embeddings_pca(df_train, df_val, df_test)
 
     if vectorize:
         df_train, df_val, df_test, title_vectorizer, title_encoder = titles_parallel_vectorize(df_train, df_val, df_test, max_workers)
