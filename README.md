@@ -151,6 +151,7 @@ output_val_path: Path = PROCESSED_DATA_DIR / "val_dataset.csv"
 output_test_path: Path = PROCESSED_DATA_DIR / "test_dataset.csv"
 
 redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False.")
+process: bool = typer.Option(False, "--process", "-p", help="Process raw dataset. Default value: False.")
 vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False.")
 translate: bool = typer.Option(False, "--translate", "-t", help="Translate the video titles to English. Default value: False.")
 detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail images. Default value: False.")
@@ -165,11 +166,12 @@ threads: int = typer.Option(0, "--threads", help="Number of threads for parallel
 Example usage:
 
 ```
-python youtube_trends/dataset.py -r -v -t -d --s -e --size=n
+python youtube_trends/dataset.py -r -p -v -t -d --s -e --size=n
 ```
 
 This will:
 - ⬇️ Download the raw dataset (if not already downloaded or if --redownload is set),
+- 🛠️ Process the raw dataset (while False, no further processing option will be implemented.),
 - 📝 Vectorize and detect the language of video titles,
 - 🔤 Translate titles to English,
 - 🔍 Detect objects in thumbnails,
