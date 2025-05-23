@@ -128,7 +128,7 @@ To deactivate the virtual environment, use the command:
 deactivate
 ```
 
-## 📦 Dependency installation
+## 📦 Dependency Installation
 
 To install the necessary dependencies, you can use the commands:
 ```bash
@@ -148,7 +148,9 @@ List of commands available for the Makefile:
 * `make requirements`: Install the required libraries from the `requirements.txt` file.
 * `make process`: Processes the data in the `/data/raw` folder and saves the results to `/data/processed`.
 
-## ▶️ How to use
+## ▶️ How to Use
+
+#### Data Processing
 
 To download and preprocess the data, you need to run the dataset.py script. This script supports several parameters to control the data processing pipeline. By default, the parameters are as follows:
 
@@ -208,3 +210,7 @@ Outputs from data processing:
     - `thumbnail_pca.pkl`,
     - `title_encoder.pkl`,
     - `title_vectorizer.pkl`.
+
+Features description for each dataset generated:
+- Raw Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
+- Processed Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
