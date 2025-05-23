@@ -4,8 +4,14 @@
     </p>
 </center>
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
+<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/" target="_blank">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
+</a>
+<a target="_blank" href="https://github.com/MaAnCoSa/Foresight" target="_blank">
+    <img src="https://img.shields.io/badge/GitHub-hosted-181717?logo=github" />
+</a>
+<a target="_blank" href="https://github.com/MaAnCoSa/Foresight/tree/main/notebooks" target="_blank">
+    <img src="https://img.shields.io/badge/Jupyter-enabled-F37626?logo=jupyter" />
 </a>
 
 A data-driven project analyzing YouTube trending videos and predicting virality using machine learning. Includes data visualization, trend insights, and predictive models.
