@@ -192,3 +192,19 @@ Using the following not explicitly specified default configuration:
 - 🤖 Use YOLOv5n model version to perform object detection in thumbnails since --size was not specified,
 - 📅 Process the entire dataset since no limit of --weeks or --days was specified,
 - 🧵 Automatically select number of threads for parallel processing since --threads was not specified.
+
+Outputs from data processing:
+- The following files will be saved in the data/raw directory:
+    - `dataset.csv`.
+- The following files will be saved in the data/processed directory:
+    - `test_dataset.csv`,
+    - `train_dataset.csv`,
+    - `val_dataset.csv`.
+- The following files will be saved in the models directory:
+    - `category_encoder.pkl`,
+    - `category_pca.pkl`,
+    - `language_pca.pkl`,
+    - `stats_scaler.pkl`,
+    - `thumbnail_pca.pkl`,
+    - `title_encoder.pkl`,
+    - `title_vectorizer.pkl`.
