@@ -10,8 +10,8 @@
 
 A data-driven project analyzing YouTube trending videos and predicting virality using machine learning. Includes data visualization, trend insights, and predictive models.
 
-## 🔧 Prior Requirements
---- 
+## 🔧 Prior Requirements 
+
 In order to execute this project, it is necessary to have the following programs in place beforehand:
 
 * Python 3.10.0+
@@ -19,7 +19,7 @@ In order to execute this project, it is necessary to have the following programs
 * Makefile (optional)
 
 ## 📂 Project Organization
---- 
+
 ```
 ├── LICENSE            <- Open-source license if one is chosen
 ├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
@@ -69,7 +69,7 @@ In order to execute this project, it is necessary to have the following programs
 ```
 
 ## 📥 Clone Project
---- 
+
 To clone the project to your computer, run the following command line:
 
 ```bash
@@ -90,7 +90,7 @@ make init
 ```
 
 ## 🐍 Virtual Environment Creation
---- 
+
 To run the project, the native Python `venv` option was used. First, navigate to your project folder.
 
 One option is to use the `make` command in our project folder to automatically create it:
@@ -123,7 +123,7 @@ deactivate
 ```
 
 ## 📦 Dependency installation
---- 
+
 To install the necessary dependencies, you can use the commands:
 ```bash
 make requirements
@@ -134,7 +134,7 @@ pip install -r requirements.txt
 ```
 
 ## ⚙️ Make Commands
---- 
+
 List of commands available for the Makefile:
 
 * `make create_environment`: Create a virtual environment and print the necessary command to activate it.
@@ -143,7 +143,7 @@ List of commands available for the Makefile:
 * `make process`: Processes the data in the `/data/raw` folder and saves the results to `/data/processed`.
 
 ## ▶️ How to use
---- 
+
 To download and preprocess the data, you need to run the dataset.py script. This script supports several parameters to control the data processing pipeline. By default, the parameters are as follows:
 
 ```python
@@ -186,6 +186,3 @@ Using the following not explicitly specified default configuration:
 - 🤖 Use YOLOv5n model version to perform object detection in thumbnails since --size was not specified,
 - 📅 Process the entire dataset since no limit of --weeks or --days was specified,
 - 🧵 Automatically select number of threads for parallel processing since --threads was not specified.
-
---------
-
