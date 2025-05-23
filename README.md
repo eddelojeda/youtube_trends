@@ -1,6 +1,6 @@
 <center>
     <p>
-        <img src="docs/YT_trends.png" style="width: 100%;" alt="YT_Trends">
+        <img src="reports/figures/YT_trends.png" style="width: 100%;" alt="YT_Trends">
     </p>
 </center>
 
