@@ -1,14 +1,23 @@
 <center>
     <p>
-        <img src="https://mcd.unison.mx/wp-content/themes/awaken/img/logo_mcd.png" width="100" alt="Logo MCD">
+        <img src="reports/figures/YT_trends.png" style="width: 100%;" alt="YT_Trends">
     </p>
 </center>
 
-# 🚀 YouTube Trends Predictor 
+<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/" target="_blank">
+    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
+</a>
+<a target="_blank" href="https://github.com/MaAnCoSa/Foresight" target="_blank">
+    <img src="https://img.shields.io/badge/GitHub-hosted-181717?logo=github" />
+</a>
+<a target="_blank" href="https://github.com/MaAnCoSa/Foresight/tree/main/notebooks" target="_blank">
+    <img src="https://img.shields.io/badge/Jupyter-enabled-F37626?logo=jupyter" />
+</a>
 
 A data-driven project analyzing YouTube trending videos and predicting virality using machine learning. Includes data visualization, trend insights, and predictive models.
 
-## 🔧 Prior Requirements
+## 🔧 Prior Requirements 
+
 In order to execute this project, it is necessary to have the following programs in place beforehand:
 
 * Python 3.10.0+
@@ -16,9 +25,6 @@ In order to execute this project, it is necessary to have the following programs
 * Makefile (optional)
 
 ## 📂 Project Organization
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
 
 ```
 ├── LICENSE            <- Open-source license if one is chosen
@@ -69,6 +75,7 @@ In order to execute this project, it is necessary to have the following programs
 ```
 
 ## 📥 Clone Project
+
 To clone the project to your computer, run the following command line:
 
 ```bash
@@ -89,6 +96,7 @@ make init
 ```
 
 ## 🐍 Virtual Environment Creation
+
 To run the project, the native Python `venv` option was used. First, navigate to your project folder.
 
 One option is to use the `make` command in our project folder to automatically create it:
@@ -120,7 +128,7 @@ To deactivate the virtual environment, use the command:
 deactivate
 ```
 
-## 📦 Dependency installation
+## 📦 Dependency Installation
 
 To install the necessary dependencies, you can use the commands:
 ```bash
@@ -140,7 +148,9 @@ List of commands available for the Makefile:
 * `make requirements`: Install the required libraries from the `requirements.txt` file.
 * `make process`: Processes the data in the `/data/raw` folder and saves the results to `/data/processed`.
 
-## ▶️ How to use
+## ▶️ How to Use
+
+#### Data Processing
 
 To download and preprocess the data, you need to run the dataset.py script. This script supports several parameters to control the data processing pipeline. By default, the parameters are as follows:
 
@@ -152,6 +162,7 @@ output_test_path: Path = PROCESSED_DATA_DIR / "test_dataset.csv"
 
 redownload: bool = typer.Option(False, "--redownload", "-r", help="Download raw dataset. Default value: False.")
 process: bool = typer.Option(False, "--process", "-p", help="Process raw dataset. Default value: False.")
+analyze: bool = typer.Option(False, "--analyze", "-a", help="Perform sentiment analysis to the video titles using VADER (NLTK). Default value: False.")
 vectorize: bool = typer.Option(False, "--vectorize", "-v", help="Vectorize and detect language of the video title. Default value: False.")
 translate: bool = typer.Option(False, "--translate", "-t", help="Translate the video titles to English. Default value: False.")
 detect: bool = typer.Option(False, "--detect", "-d", help="Detect objects in thumbnail images. Default value: False.")
@@ -163,23 +174,43 @@ days: int = typer.Option(0, "--days", help="Number of days to use from the raw d
 threads: int = typer.Option(0, "--threads", help="Number of threads for parallel processing. Default: 0 (auto).")
 ```
 
-Example usage:
+**Example usage:**
 
-```
-python youtube_trends/dataset.py -r -p -v -t -d --s -e --size=n
+```bash
+python youtube_trends/dataset.py -r -p -a -v -t -d -s -e
 ```
 
 This will:
-- ⬇️ Download the raw dataset (if not already downloaded or if --redownload is set),
-- 🛠️ Process the raw dataset (while False, no further processing option will be implemented.),
-- 📝 Vectorize and detect the language of video titles,
-- 🔤 Translate titles to English,
-- 🔍 Detect objects in thumbnails,
-- 🎨 Compute thumbnail stats (brightness, contrast, saturation),
-- 🧠 Extract thumbnail embeddings,
-- 🔧 Select YOLOv5n model version to perform object detection in thumbnails,
-- 📅 Process the full dataset (no limits on weeks/days),
-- ⚙️ Automatically select number of threads for parallel processing.
+- ⬇️ -r: Download the raw dataset (if not already downloaded or if --redownload is set),
+- 🛠️ -p: Process the raw dataset (while False, no further processing option will be implemented),
+- 💬 -a: Perform sentiment analysis on video titles using VADER (NLTK),
+- 📝 -v: Vectorize and detect the language of video titles,
+- 🔤 -t: Translate titles to English,
+- 🔍 -d: Detect objects in thumbnails,
+- 🎨 -s: Compute thumbnail stats (brightness, contrast, saturation),
+- 🧠 -e: Extract thumbnail embeddings.
 
---------
+Using the following not explicitly specified default configuration:
+- 🤖 Use YOLOv5n model version to perform object detection in thumbnails since --size was not specified,
+- 📅 Process the entire dataset since no limit of --weeks or --days was specified,
+- 🧵 Automatically select number of threads for parallel processing since --threads was not specified.
 
+Outputs from data processing:
+- The following files will be saved in the data/raw directory:
+    - `dataset.csv`.
+- The following files will be saved in the data/processed directory:
+    - `test_dataset.csv`,
+    - `train_dataset.csv`,
+    - `val_dataset.csv`.
+- The following files will be saved in the models directory:
+    - `category_encoder.pkl`,
+    - `category_pca.pkl`,
+    - `language_pca.pkl`,
+    - `stats_scaler.pkl`,
+    - `thumbnail_pca.pkl`,
+    - `title_encoder.pkl`,
+    - `title_vectorizer.pkl`.
+
+Features description for each dataset generated:
+- Raw Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
+- Processed Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
