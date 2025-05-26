@@ -214,3 +214,23 @@ Outputs from data processing:
 Features description for each dataset generated:
 - Raw Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
 - Processed Dataset: [Description](references/Raw_Data_Dictionary.md) - [CSV](references/Raw_Data_Dictionary.csv)
+
+#### Models
+
+To train the models contained in the files in the notebooks directory, you need to run the train.py script. The following files will be saved in the models directory:
+    - `Decision_Tree_likes.pkl`,
+    - `Decision_Tree_views.pkl`,
+    - `Distribution_days_trend.pkl`,
+    - `Lasso_likes.pkl`,
+    - `Lasso_views.pkl`,
+    - `Linear_Regression_likes.pkl`,
+    - `Linear_Regression_views.pkl`,
+    - `Random_Forest_likes.pkl`,
+    - `Random_Forest_views.pkl`,
+    - `Ridge_likes.pkl`,
+    - `Ridge_views.pkl`,
+    - `scaler_regression.pkl`,
+    - `XGBoost_likes.pkl`,
+    - `XGBoost_views.pkl`.    
+
+All experiment results, including metrics, classification reports, and model artifacts, are logged automatically to [DagsHub MLflow](https://dagshub.com/eddelojeda/youtube_trends.mlflow/#/experiments/0?viewStateShareKey=3894e7dac091113a949e1a0b144bdfbf23f857b1cfb2b6251e919052fe25b155&compareRunsMode=TABLE).
