@@ -7,6 +7,7 @@ The purpose of this file is to provide a clear and detailed description of the c
 | Name                       | Type    | Description                                                                  |
 | -------------------------- | ------- | ---------------------------------------------------------------------------- |
 | video_published_at         | object  | The date and time when the video was published                               |
+| days_publishewd            | int64   | Number of days the video has been published                                  |
 | video_duration             | object  | Duration of the video in seconds                                             |
 | published_dayofweek        | int64   | Day of the week when the video was published (Monda =0,...,Sunday=6)         |
 | published_hour             | int64   | Hour of the day when the video was published (0 to 23)                       |
