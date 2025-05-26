@@ -296,6 +296,10 @@ def process_dataset(analyze, vectorize, translate, detect, stats, embed, size, w
         df = df[df['video_published_at'] >= start_date]
     df.reset_index(drop=True, inplace=True)
 
+    last_date = pd.to_datetime(df['video_published_at'].max())
+    df['video_published_at'] = pd.to_datetime(df['video_published_at'])
+    df['days_published'] = (last_date - df['video_published_at']).dt.days
+
     df['published_dayofweek'] = df['video_published_at'].dt.dayofweek
     df['published_hour'] = df['video_published_at'].dt.hour
     df['days_to_trend'] = (df['video_trending__date'] - df['video_published_at']).dt.days
